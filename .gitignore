@@ -3,3 +3,11 @@ __pycache__/
 .venv/
 figures/
 .mplconfig/
+data/
+outputs/
+*.npz
+*.tif
+*.tiff
+*.pdf
+*.png
+*.csv

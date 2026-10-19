@@ -1,50 +1,120 @@
 # Fig2_Watershed_SWE
 
-`Fig2_Watershed_SWE.py` generates Figure 2, with native-grid model watershed
-SWE curves and unfiltered native ASO flight-footprint means.
+`Fig2_Watershed_SWE.py` generates Figure 2 from watershed SWE on the Noah-MP
+analysis grid. This revision replaces the earlier native-grid display. It is
+postprocessing of saved model states and original, unfiltered ASO products;
+neither snow model is rerun. Research inputs and figures are distributed
+separately from the public code.
 
-## Plot from prepared inputs
+## Prepare daily model means
 
-Install the plotting requirements, then supply the prepared data directory and
-an available TrueType font (the local figure delivery includes Nimbus Sans):
+Install NumPy and pandas, then run:
+
+```sh
+python code/models/extract_fixed_model_means.py --cache-dir /path/to/spatial_caches --grid /path/to/grid_common.npz --output-dir /path/to/prepared_data/models
+```
+
+The cache directory must contain the existing `isnobal_wyYYYY_noahgrid_daily.npz`
+and `noahmp_wyYYYY_noahgrid_daily.npz` files for 2018 through 2026. These contain
+`dates` and `swe_mm` arrays with shape (day, 66, 54). Historic years must contain
+every October-September day; WY2026 ends June 30. The grid NPZ supplies
+`weights`, `fixed_domain_mask`, `transform`, and projected metric `crs`.
+The last-daily iSnobal states were area averaged from the native 50 m grid to
+the 1 km Noah-MP grid in the verified production cache builder. This program
+does not attempt to remap a one-dimensional basin mean.
+
+All 842 positive watershed-area targets form the fixed model footprint. Both
+models use this same footprint every day and fractional watershed-area
+weights, accumulated in float64. Finite zeros remain. Missing or negative
+retained model SWE aborts extraction, rather than changing daily masks. Input
+hashes, independent scalar checks, and separate ancillary-variable coverage
+are recorded. See `code/models/MODEL_OPERATOR_README.txt` for scope and limits.
+
+## Prepare unfiltered ASO means
+
+Install `requirements-common-grid.txt`, then run:
+
+```sh
+python extract_fig2_common_aso.py --aso-directory /path/to/raw_ASO --flights /path/to/flights.csv --grid-weights /path/to/grid_common.npz --output-directory /path/to/prepared_data/aso
+```
+
+The flight CSV contains ISO `date` and optional relative `source_file`. Source
+filenames otherwise follow `ASO_50M_SWE_USCOGE_YYYYMMDD.tif`. Source masks,
+declared NoData, and nonfinite values define validity; all other supplied
+finite values, including zero, negative and extreme values, remain unfiltered.
+The extractor checks source units before converting SWE to millimeters.
+
+SWE is area averaged over valid contributing source area in each full target
+cell. Separately, the source-validity raster is zero padded beyond its extent
+before averaging, so the coverage denominator is the **whole target-cell
+area**, including space outside the ASO raster. Retain targets with at least
+50% valid source coverage, then compute `sum(a_j * SWE_j) / sum(a_j)`, where
+`a_j` is target-cell area inside the watershed. Do not multiply these basin
+weights by source coverage again. This two-stage operator averages full-cell
+source fields before applying fractional watershed weights; it is not native
+pixel clipping to the watershed polygon.
+
+Reported ASO basin coverage is the watershed area represented by retained
+targets divided by the fixed target watershed area. It is distinct from the
+exact native observed footprint. Each flight can have a different retained
+footprint. For direct numerical comparisons, sample both models on the same
+flight-specific targets; the model curves themselves retain the fixed domain.
+
+## Generate Figure 2
 
 ```sh
 python -m pip install -r requirements.txt
-python Fig2_Watershed_SWE.py --data-dir /path/to/prepared_data --font /path/to/font.ttf --output-dir /path/to/fig2_outputs
+python Fig2_Watershed_SWE.py --data-dir /path/to/prepared_data --output-dir /path/to/fig2_outputs
 ```
 
-The data directory must contain `watershed_swe_native_daily.csv` and
-`aso_native_flight_footprint.csv`. Input data are distributed separately.
-The first CSV needs date, wy, swe_i_mm, swe_n_mm and i_native_valid_area_fraction.
-The second needs date, wy, aso_watershed_mean_mm, aso_valid_area_fraction,
-valid_area_m2 and watershed_area_m2. Native area columns deliberately distinguish
-the corrected input from the older remapped-cell observation table.
+An optional `--font /path/to/font.ttf` selects an available font. Otherwise the
+Matplotlib bundled sans-serif font is used. The prepared directory contains:
 
-Outputs are a vector PDF, a 600-dpi PNG, model-comparison statistics and
-an execution record with input/output hashes. Model summaries are preserved;
-this is figure-generation code, not a model simulation.
+- `models/Fig2_common_grid_daily.csv`: `date`, `wy`, `swe_i_mm`, `swe_n_mm`,
+  `fixed_model_area_fraction`, `daily_common_valid_area_fraction`,
+  `fixed_model_cells`, `state_hour_utc`.
+- `aso/aso_common_grid_flights.csv`: `date`, `wy`, `aso_watershed_mean_mm`,
+  `aso_valid_area_fraction`, `retained_target_watershed_area_m2`,
+  `fixed_model_watershed_area_m2`.
 
-## Recompute native ASO means
+Model coverage declarations must equal 1, the target count must be 842, and
+the state hour must be 23 UTC. ASO denominators must match the fixed analysis
+area, 748679519.6193271 square meters. Dates, water years, complete calendars,
+finite values, and all 14 documented flights are checked before plotting.
+Outputs are a vector PDF, 600 dpi PNG, display-period statistics, and an
+execution record with hashes. Comparative annual metrics from the extractor
+use both the displayed period and a separate common October-June window;
+full-year display statistics should not be substituted for October-June results.
+
+## Validation and dependent figures
 
 ```sh
-python -m pip install -r requirements-native.txt
-python extract_fig2_native_aso.py --aso-directory /path/to/raw_ASO --watershed /path/to/WBDHU10.shp --watershed-field name --watershed-value "East River" --flights /path/to/flights.csv --output /path/to/prepared_data/aso_native_flight_footprint.csv --manifest /path/to/prepared_data/aso_native_provenance.json
+python -m pip install -r requirements-common-grid.txt -r requirements-native.txt
 python -m unittest discover -s tests -v
+python -m unittest discover -s code/models -p 'test*.py' -v
 ```
 
-The flight CSV needs an ISO date column and may specify source_file filenames.
-The default raw filename pattern is ASO_50M_SWE_USCOGE_YYYYMMDD.tif.
+Run these commands from this figure folder. The native requirements are needed
+only for the retained native audit utility and its tests; they are not required
+to plot the prepared common-grid inputs.
 
-Native means are sum(SWE times exact valid source-pixel/watershed overlap area)
-divided by total valid overlap area. Coverage divides that valid area by the
-FULL projected watershed polygon area. Source-declared NoData/source masks
-and nonfinite SWE are excluded; finite zero, negative and extreme values remain.
-There is no Noah-MP remapping, magnitude filter or target-cell coverage threshold
-for these markers. The code checks SWE units, uses projected metric areas,
-rejects ambiguous units/geographic or rotated grids, and protects input paths
-against accidental output overwriting. The supplied tests use synthetic data.
+Synthetic tests independently exercise partial coverage, source-edge
+normalization, missing values, finite zeros, fractional weights, fixed masks,
+and calendar/plot-input failures. Original sources are read only. Previously
+published `extract_fig2_native_aso.py` remains an audit utility for the former
+native operator and is not the current Figure 2 input pipeline.
 
-Model and ASO spatial supports differ; their overlay supplies seasonal context.
-Other ASO comparisons can use separately defined spatial operators. Source
-filenames, raw-data hashes and numerical validation records belong in the
-separate scientific-data delivery. No new code/data license is assigned here.
+Related generators retain figure-specific names:
+
+- [Figure 5 ASO performance](code/f5/README.txt): corrected full-target ASO
+  coverage, fresh unfiltered SWE/depth scores, and independent verification.
+- [Figure 6 timing and dependent Figure 8/S5 updates](code/timing/README.txt):
+  timing tables, revised conditional-loss dates, and separated native accounting.
+- [Supplemental S2 three-source density](code/S2_Three_Source_Density.py):
+  the same corrected ASO coverage on the established shared density support.
+
+Spatial error scores use equal retained-cell weights;
+Figure 2 basin means use fractional watershed-area weights. Storage/input
+accounting remains on its original native support unless every term has been
+verified on the same replacement support and clock. No new data or code
+license is assigned by this update.

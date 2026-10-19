@@ -1,8 +1,9 @@
-"""Generate manuscript Figure 2: native watershed SWE and unfiltered ASO footprints.
+"""Generate Figure 2: fractional watershed-area means on the Noah-MP grid.
 
-Default inputs are the compact CSVs distributed alongside this script. Recompute
-the ASO input from raw 50-m rasters with extract_fig2_native_aso.py. Model series
-are preserved native-grid watershed means at 2300 UTC, not new simulations.
+Build model input with code/models/extract_fixed_model_means.py and ASO input
+with extract_fig2_common_aso.py. Daily models share one fixed target footprint;
+each unfiltered ASO flight uses its own retained targets and reported coverage.
+Research data and generated outputs are supplied separately from public code.
 """
 from __future__ import annotations
 
@@ -38,11 +39,12 @@ def sha256(path: Path) -> str:
 
 
 def load_inputs(data_dir: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
-    model = pd.read_csv(data_dir / "watershed_swe_native_daily.csv", parse_dates=["date"])
-    aso = pd.read_csv(data_dir / "aso_native_flight_footprint.csv", parse_dates=["date"])
-    model_required = {"date", "wy", "swe_i_mm", "swe_n_mm", "i_native_valid_area_fraction"}
+    model = pd.read_csv(data_dir / "models/Fig2_common_grid_daily.csv", parse_dates=["date"])
+    aso = pd.read_csv(data_dir / "aso/aso_common_grid_flights.csv", parse_dates=["date"])
+    model_required = {"date", "wy", "swe_i_mm", "swe_n_mm", "fixed_model_area_fraction",
+                      "daily_common_valid_area_fraction", "fixed_model_cells", "state_hour_utc"}
     aso_required = {"date", "wy", "aso_watershed_mean_mm", "aso_valid_area_fraction",
-                    "valid_area_m2", "watershed_area_m2"}
+                    "retained_target_watershed_area_m2", "fixed_model_watershed_area_m2"}
     for name, frame, required in [("model", model, model_required), ("ASO", aso, aso_required)]:
         if missing := required - set(frame):
             raise ValueError(f"{name} table lacks required columns: {sorted(missing)}")
@@ -65,20 +67,28 @@ def load_inputs(data_dir: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
         raise ValueError("ASO data must contain exactly the 14 documented flight dates")
     values = model[["swe_i_mm", "swe_n_mm"]].to_numpy(float)
     if not np.isfinite(values).all() or (values < 0).any():
-        raise ValueError("Native model SWE must be finite and nonnegative")
-    coverage = model.i_native_valid_area_fraction.to_numpy(float)
-    if not (np.isfinite(coverage) & (coverage >= 0.999) & (coverage <= 1)).all():
-        raise ValueError("Native iSnobal data do not meet the preserved coverage requirement")
-    fields = ["aso_watershed_mean_mm", "aso_valid_area_fraction", "valid_area_m2", "watershed_area_m2"]
+        raise ValueError("Common-grid model SWE must be finite and nonnegative")
+    if not model[["fixed_model_area_fraction", "daily_common_valid_area_fraction"]].eq(1).all().all():
+        raise ValueError("Both model curves require complete finite support on the fixed target footprint")
+    if not model.fixed_model_cells.eq(842).all() or not model.state_hour_utc.eq(23).all():
+        raise ValueError("Expected 842 fixed watershed targets and 2300 UTC model states")
+    fields = ["aso_watershed_mean_mm", "aso_valid_area_fraction",
+              "retained_target_watershed_area_m2", "fixed_model_watershed_area_m2"]
     if not np.isfinite(aso[fields].to_numpy(float)).all():
-        raise ValueError("ASO native means and areas must be finite")
+        raise ValueError("ASO target means and areas must be finite")
     fraction = aso.aso_valid_area_fraction.to_numpy(float)
     if not ((fraction > 0) & (fraction <= 1 + 1e-10)).all():
-        raise ValueError("ASO valid native footprint must cover >0 and <=100% of the watershed")
-    if not ((aso.valid_area_m2 > 0) & (aso.watershed_area_m2 > 0)).all():
-        raise ValueError("ASO footprint areas must be positive")
-    if not np.allclose(fraction, aso.valid_area_m2 / aso.watershed_area_m2, rtol=0, atol=1e-10):
-        raise ValueError("ASO coverage must equal exact valid pixel area / full watershed area")
+        raise ValueError("ASO retained targets must cover >0 and <=100% of the fixed basin area")
+    if not (
+        (aso.retained_target_watershed_area_m2 > 0) & (aso.fixed_model_watershed_area_m2 > 0)
+    ).all():
+        raise ValueError("ASO target areas must be positive")
+    if not np.allclose(aso.fixed_model_watershed_area_m2, 748679519.6193271,
+                       rtol=0, atol=1e-3):
+        raise ValueError("ASO denominator must match the fixed Noah-MP watershed area")
+    if not np.allclose(fraction, aso.retained_target_watershed_area_m2 /
+                       aso.fixed_model_watershed_area_m2, rtol=0, atol=1e-10):
+        raise ValueError("ASO coverage must equal retained / fixed target watershed area")
     return model, aso
 
 
@@ -140,7 +150,7 @@ def render(model: pd.DataFrame, aso: pd.DataFrame, output_dir: Path, font: Path 
         Line2D([], [], color=I_COLOR, label="iSnobal"),
         Line2D([], [], color=N_COLOR, linestyle="--", label="Noah-MP"),
         Line2D([], [], color="black", marker="o", linestyle="", markersize=3,
-               label="ASO native footprint"),
+               label="ASO (flight coverage)"),
     ], loc="upper center", bbox_to_anchor=(0.5, 0.995), ncol=3, frameon=False)
     paths = []
     for suffix in ("pdf", "png"):
@@ -156,7 +166,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--data-dir", type=Path, default=here / "data")
     ap.add_argument("--output-dir", type=Path, default=here / "figures")
-    ap.add_argument("--font", type=Path, default=here / "assets/NimbusSans-Regular.ttf")
+    ap.add_argument("--font", type=Path, default=None,
+                    help="Optional local font file; defaults to Matplotlib's bundled sans-serif")
     args = ap.parse_args()
     model, aso = load_inputs(args.data_dir)
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -164,19 +175,22 @@ def main() -> None:
     stats_path = args.output_dir / "Fig2_model_statistics.csv"
     model_statistics(model, aso).to_csv(stats_path, index=False)
     info = {
-        "figure": "Fig. 2 - Watershed SWE with unfiltered native ASO flight footprints",
-        "operation": "Figure replay from preserved model summaries and native raw-ASO extraction; no model simulation",
+        "figure": "Fig. 2 - Noah-MP-grid area-weighted watershed SWE",
+        "operation": "Figure replay from verified spatial-cache aggregation and raw unfiltered ASO remapping; no model simulation",
         "python": platform.python_version(), "numpy": np.__version__,
         "pandas": pd.__version__, "matplotlib": matplotlib.__version__,
+        "generator_sha256": sha256(Path(__file__)),
         "model_rows": len(model), "aso_flights": len(aso),
-        "model_support": "Each model's native-grid fractional watershed area, 2300 UTC states",
-        "aso_support": "Raw finite, non-NoData source pixels with exact pixel/watershed intersections; no remapping, magnitude filtering, or source-coverage threshold",
-        "aso_coverage_denominator": "Full watershed polygon area in each source raster's projected metric CRS",
+        "model_support": "Same fixed 842 positive-area Noah-MP targets on every date, fractional watershed area weights, 2300 UTC states",
+        "aso_support": "Area average of valid supplied source pixels (including finite zeros) in each full target; retain target when full-cell source-valid area fraction >=0.5; then fractional watershed area weighting of retained targets",
+        "aso_coverage_denominator": "Fixed 842-target fractional watershed area; coverage describes retained target area, not exact native observed polygon area",
+        "statistics_window": "Each panel's displayed period; common October-June interannual metrics are in data/models/Fig2_old_vs_new_annual_metrics.csv",
+        "comparison_limit": "ASO markers have flight-specific footprints. Direct matched-flight comparisons must use data/aso/matched_flight_basin_means.csv, which samples all three on identical retained targets.",
         "aso_mean_range_mm": [float(aso.aso_watershed_mean_mm.min()), float(aso.aso_watershed_mean_mm.max())],
         "aso_coverage_range": [float(aso.aso_valid_area_fraction.min()), float(aso.aso_valid_area_fraction.max())],
         "inputs_sha256": {p.name: sha256(p) for p in [
-            args.data_dir / "watershed_swe_native_daily.csv",
-            args.data_dir / "aso_native_flight_footprint.csv", args.font]},
+            args.data_dir / "models/Fig2_common_grid_daily.csv",
+            args.data_dir / "aso/aso_common_grid_flights.csv"] + ([args.font] if args.font else [])},
         "outputs_sha256": {p.name: sha256(p) for p in figures + [stats_path]},
     }
     receipt = args.output_dir / "Fig2_execution.json"
