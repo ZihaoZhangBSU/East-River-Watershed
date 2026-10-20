@@ -95,11 +95,16 @@ def load_inputs(data_dir: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
 def model_statistics(model: pd.DataFrame, aso: pd.DataFrame) -> pd.DataFrame:
     records = []
     for wy, q in model.groupby("wy", sort=True):
+        mean_i = float(q.swe_i_mm.mean())
+        mean_n = float(q.swe_n_mm.mean())
         records.append({
             "wy": int(wy), "start_date": q.date.min().date().isoformat(),
             "end_date": q.date.max().date().isoformat(), "n_dates": len(q),
             "pearson_r": float(q.swe_i_mm.corr(q.swe_n_mm)),
             "mean_bias_noah_minus_isnobal_mm": float((q.swe_n_mm - q.swe_i_mm).mean()),
+            "mean_swe_isnobal_mm": mean_i,
+            "mean_swe_noahmp_mm": mean_n,
+            "relative_difference_noah_vs_isnobal_pct": 100 * (mean_n / mean_i - 1) if mean_i != 0 else np.nan,
             "aso_flight_count": int(aso.wy.eq(wy).sum()),
         })
     return pd.DataFrame(records)
@@ -184,7 +189,7 @@ def main() -> None:
         "model_support": "Same fixed 842 positive-area Noah-MP targets on every date, fractional watershed area weights, 2300 UTC states",
         "aso_support": "Area average of valid supplied source pixels (including finite zeros) in each full target; retain target when full-cell source-valid area fraction >=0.5; then fractional watershed area weighting of retained targets",
         "aso_coverage_denominator": "Fixed 842-target fractional watershed area; coverage describes retained target area, not exact native observed polygon area",
-        "statistics_window": "Each panel's displayed period; common October-June interannual metrics are in data/models/Fig2_old_vs_new_annual_metrics.csv",
+        "statistics_window": "Full October-September WY2018-WY2025; October-June WY2026. Statistics retain every displayed date, including snow-free days. The extractor separately supplies common October-June sensitivity metrics.",
         "comparison_limit": "ASO markers have flight-specific footprints. Direct matched-flight comparisons must use data/aso/matched_flight_basin_means.csv, which samples all three on identical retained targets.",
         "aso_mean_range_mm": [float(aso.aso_watershed_mean_mm.min()), float(aso.aso_watershed_mean_mm.max())],
         "aso_coverage_range": [float(aso.aso_valid_area_fraction.min()), float(aso.aso_valid_area_fraction.max())],

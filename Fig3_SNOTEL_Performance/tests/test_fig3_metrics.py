@@ -80,6 +80,13 @@ class MetricDefinitionTests(unittest.TestCase):
         for wy, expected in [(2019, 273), (2020, 274), (2024, 274), (2026, 273)]:
             self.assertEqual(len(list(metrics.calendar_days(date(wy - 1, 10, 1), date(wy, 6, 30)))), expected)
 
+    def test_historical_full_year_and_2026_partial_amount_windows(self):
+        for wy, expected in [(2018, 365), (2020, 366), (2024, 366), (2026, 273)]:
+            days = metrics.amount_days(wy)
+            self.assertEqual(len(days), expected)
+            self.assertEqual(days[0], date(wy - 1, 10, 1))
+            self.assertEqual(days[-1], date(wy, 6, 30) if wy == 2026 else date(wy, 9, 30))
+
 
 class SourceValidationTests(unittest.TestCase):
     def setUp(self):
@@ -148,8 +155,23 @@ class SourceValidationTests(unittest.TestCase):
         observed_event = next(row for row in audit["source_events"] if row["station_id"] == 380
                               and row["wy"] == 2026 and row["source"] == "SNOTEL")
         self.assertTrue(observed_event["sdd_censored"])
-        self.assertEqual(sum(row["paired_scoring_days"] for row in audit["paired_support"]), 7377)
-        self.assertEqual(sum(row["observed_zero_swe_days"] for row in audit["paired_support"]), 7104)
+        self.assertEqual(sum(row["paired_scoring_days"] for row in audit["paired_support"]), 9585)
+        self.assertEqual(sum(row["observed_zero_swe_days"] for row in audit["paired_support"]), 9312)
+
+    def test_july_scores_enter_amount_but_do_not_change_october_june_peak(self):
+        sources = {source: {(station, wy): {day: 0.0 for day in metrics.amount_days(wy)}
+                            for station in metrics.STATIONS for wy in metrics.YEARS}
+                   for source in metrics.SOURCE_COLUMNS}
+        sources["SNOTEL"][(380, 2018)][date(2018, 7, 1)] = 10.0
+        sources["iSnobal"][(380, 2018)][date(2018, 7, 1)] = 20.0
+        rows, _ = metrics.recompute(sources)
+        row = next(row for row in rows if (row["station_id"], row["wy"], row["model"]) == (380, 2018, "iSnobal"))
+        self.assertAlmostEqual(row["mb"], 10.0 / 365)
+        self.assertAlmostEqual(row["rmse"], 10.0 / math.sqrt(365))
+        self.assertEqual(row["amount_n_days"], 365)
+        self.assertEqual(row["amount_window_end"], "2018-09-30")
+        self.assertEqual(row["peak_date"], "2017-10-01")
+        self.assertEqual(row["sdd_date"], "2017-10-02")
 
 
 if __name__ == "__main__":

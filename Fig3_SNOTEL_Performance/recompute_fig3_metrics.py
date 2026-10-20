@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""Recompute Fig. 3 metrics from archived daily nearest-cell station tables.
+"""Recompute Fig. 3 station metrics using each year's available amount record.
 
+Historical amount scores use October--September; WY2026 uses October--June.
+Peak anchors remain October--June, and SDD uses the full available record.
 This script validates the saved station series; it does not extract or validate
 raw observations, quality flags, raw model files, spatial lookup, or clocks.
 Only Python's standard library is required.
@@ -27,6 +29,7 @@ METRIC_FIELDS = (
     "station_id", "station_name", "wy", "model", "mb", "rmse",
     "peak_date", "sdd_date", "peak_error_days", "sdd_error_days",
     "sdd_censored", "available_record_end", "observed_sdd_censored",
+    "amount_window_start", "amount_window_end", "amount_n_days",
 )
 
 
@@ -39,6 +42,11 @@ def calendar_days(start: date, end: date):
 
 def available_end(wy: int) -> date:
     return date(wy, 6, 30) if wy == 2026 else date(wy, 9, 30)
+
+
+def amount_days(wy: int) -> list[date]:
+    """Full historical water year; actual October--June record for WY2026."""
+    return list(calendar_days(date(wy - 1, 10, 1), available_end(wy)))
 
 
 def load_source(path: Path, source: str) -> dict:
@@ -142,7 +150,7 @@ def recompute(sources: dict) -> tuple[list[dict], dict]:
     for station, name in STATIONS.items():
         for wy in YEARS:
             key = (station, wy)
-            days = list(calendar_days(date(wy - 1, 10, 1), date(wy, 6, 30)))
+            days = amount_days(wy)
             daily = {source: sources[source][key] for source in SOURCE_COLUMNS}
             # All three sources must have exactly the same complete scoring
             # dates. No model-specific filtering or observation gap filling.
@@ -154,6 +162,9 @@ def recompute(sources: dict) -> tuple[list[dict], dict]:
                     for source, values in daily.items()}
             support.append({"station_id": station, "wy": wy,
                             "paired_scoring_days": len(days),
+                            "amount_window_start": days[0].isoformat(),
+                            "amount_window_end": days[-1].isoformat(),
+                            "amount_window": "october_june_partial" if wy == 2026 else "october_september_full",
                             "observed_zero_swe_days": sum(daily["SNOTEL"][d] == 0 for d in days)})
             for source in SOURCE_COLUMNS:
                 peak, maximum, ties = peaks[source]
@@ -168,6 +179,9 @@ def recompute(sources: dict) -> tuple[list[dict], dict]:
                     "sdd_censored": sdd is None,
                     "available_record_end": max(daily[source]).isoformat(),
                     "observed_sdd_censored": sdds["SNOTEL"] is None,
+                    "amount_window_start": days[0].isoformat(),
+                    "amount_window_end": days[-1].isoformat(),
+                    "amount_n_days": len(days),
                 })
                 if source == "SNOTEL":
                     continue
@@ -183,6 +197,9 @@ def recompute(sources: dict) -> tuple[list[dict], dict]:
                     "sdd_censored": sdd is None,
                     "available_record_end": max(daily[source]).isoformat(),
                     "observed_sdd_censored": sdds["SNOTEL"] is None,
+                    "amount_window_start": days[0].isoformat(),
+                    "amount_window_end": days[-1].isoformat(),
+                    "amount_n_days": len(days),
                 })
     return rows, {"paired_support": support, "source_events": events}
 
@@ -190,7 +207,10 @@ def recompute(sources: dict) -> tuple[list[dict], dict]:
 def compare_reference(rows: list[dict], path: Path) -> dict:
     """Check every plotted metric and date against an optional frozen table."""
     with Path(path).open(newline="", encoding="utf-8-sig") as stream:
-        reference = list(csv.DictReader(stream))
+        reader = csv.DictReader(stream)
+        if not set(METRIC_FIELDS).issubset(reader.fieldnames or []):
+            raise ValueError("Reference must include revised amount-score window/count and censor metadata")
+        reference = list(reader)
     key_fields = ("station_id", "wy", "model")
     def key(row):
         return tuple(str(row[field]) for field in key_fields)
@@ -211,7 +231,8 @@ def compare_reference(rows: list[dict], path: Path) -> dict:
             tolerance = 1e-10 if field in ("mb", "rmse") else 0.0
             if not math.isfinite(float(b)) or difference > tolerance:
                 differences.append({"key": key(row), "field": field, "computed": a, "reference": b})
-        for field in ("station_name", "peak_date", "sdd_date", "sdd_censored", "available_record_end"):
+        for field in ("station_name", "peak_date", "sdd_date", "sdd_censored", "available_record_end",
+                      "observed_sdd_censored", "amount_window_start", "amount_window_end", "amount_n_days"):
             if str(row[field]) != old[field]:
                 differences.append({"key": key(row), "field": field, "computed": row[field], "reference": old[field]})
     return {"metric_values_checked": 4 * len(rows), "maximum_absolute_differences": largest,
@@ -230,6 +251,7 @@ def main(argv=None) -> None:
     paths = {"SNOTEL": args.snotel, "iSnobal": args.isnobal, "Noah-MP": args.noahmp}
     sources = {source: load_source(path, source) for source, path in paths.items()}
     rows, audit = recompute(sources)
+    audit["code_sha256"] = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     audit["input_files"] = [
         {"source": source, "filename": path.name,
          "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
@@ -238,7 +260,7 @@ def main(argv=None) -> None:
         for source, path in paths.items()
     ]
     audit["definitions"] = {
-        "amount": "Mean(model minus SNOTEL) and RMSE, common finite October-June dates including zeros and leap days; no gap filling.",
+        "amount": "Mean(model minus SNOTEL) and RMSE, identical finite dates in all three sources: historical October-September, WY2026 October-June; zeros and leap days retained; no gap filling or July-September 2026 padding.",
         "peak": "Own first chronological exact maximum, October-June.",
         "sdd": "First day strictly after own peak starting seven consecutive calendar days SWE <10 mm; full available WY record (historical September 30, WY2026 June 30).",
         "censoring": "An unconfirmed event is blank; SDD error is blank unless both observed and model events are confirmed.",

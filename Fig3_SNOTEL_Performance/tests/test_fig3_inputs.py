@@ -22,6 +22,10 @@ def valid_table():
                          peak_date=(pd.Timestamp(wy, 3, 1) + pd.Timedelta(days=shift)).strftime('%Y-%m-%d'),
                          sdd_date=(pd.Timestamp(wy, 5, 1) + pd.Timedelta(days=shift)).strftime('%Y-%m-%d'),
                          peak_error_days=shift, sdd_error_days=shift, sdd_censored=False,
+                         amount_window_start=f'{wy-1}-10-01',
+                         amount_window_end=f'{wy}-06-30' if wy == 2026 else f'{wy}-09-30',
+                         amount_n_days=(pd.Timestamp(wy, 6, 30) - pd.Timestamp(wy-1, 10, 1)).days + 1 if wy == 2026
+                                       else (pd.Timestamp(wy, 9, 30) - pd.Timestamp(wy-1, 10, 1)).days + 1,
                          available_record_end=f'{wy}-06-30' if wy == 2026 else f'{wy}-09-30'))
     return pd.DataFrame(rows).astype({'mb': float, 'rmse': float})
 
@@ -75,6 +79,25 @@ class Fig3InputTests(unittest.TestCase):
                 table = valid_table()
                 table.loc[0, field] = value
                 self.rejected(table)
+
+    def test_historical_october_june_amount_metadata_is_rejected(self):
+        table = valid_table()
+        table.loc[0, 'amount_window_end'] = '2018-06-30'
+        table.loc[0, 'amount_n_days'] = 273
+        self.rejected(table)
+
+    def test_2026_padded_full_year_metadata_is_rejected(self):
+        table = valid_table()
+        index = table.index[table.wy.eq(2026)][0]
+        table.loc[index, 'amount_window_end'] = '2026-09-30'
+        table.loc[index, 'amount_n_days'] = 365
+        self.rejected(table)
+
+    def test_amount_count_must_include_leap_day(self):
+        table = valid_table()
+        index = table.index[table.wy.eq(2020)][0]
+        table.loc[index, 'amount_n_days'] = 365
+        self.rejected(table)
 
     def test_negative_rmse_is_rejected(self):
         table = valid_table()

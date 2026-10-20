@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Generate Figure 3: SNOTEL performance of iSnobal and Noah-MP, WY2018-2026.
 
+Amount scores use complete historical October--September records and the
+available October--June WY2026 record; timing anchors remain October--June.
 Provide the separately supplied 54-row metrics CSV, or build it first with
 recompute_fig3_metrics.py. No research data or machine-specific paths are bundled.
 """
@@ -32,6 +34,7 @@ REQUIRED = {
     "station_id", "station_name", "wy", "model", "mb", "rmse",
     "peak_date", "sdd_date", "peak_error_days", "sdd_error_days",
     "sdd_censored", "available_record_end",
+    "amount_window_start", "amount_window_end", "amount_n_days",
 }
 
 
@@ -69,7 +72,7 @@ def validate_metrics(table: pd.DataFrame) -> pd.DataFrame:
     if not table.columns.is_unique or not REQUIRED.issubset(table.columns):
         raise ValueError("Missing or duplicate required metrics columns")
     q = table.copy()
-    for field in ("station_id", "wy", *FIELDS):
+    for field in ("station_id", "wy", "amount_n_days", *FIELDS):
         try:
             q[field] = pd.to_numeric(q[field].replace("", np.nan), errors="raise")
         except (ValueError, TypeError) as error:
@@ -81,7 +84,7 @@ def validate_metrics(table: pd.DataFrame) -> pd.DataFrame:
         elif not np.isfinite(values).all():
             raise ValueError(f"{field}: values must be finite")
         finite = values[np.isfinite(values)]
-        if field in ("station_id", "wy", "peak_error_days", "sdd_error_days"):
+        if field in ("station_id", "wy", "amount_n_days", "peak_error_days", "sdd_error_days"):
             if not np.equal(finite, np.floor(finite)).all():
                 raise ValueError(f"{field}: values must be whole numbers")
     for field in ("station_id", "wy"):
@@ -101,7 +104,7 @@ def validate_metrics(table: pd.DataFrame) -> pd.DataFrame:
         q["observed_sdd_censored"] = False
     for field in ("sdd_censored", "observed_sdd_censored"):
         q[field] = q[field].map(lambda value: _boolean(value, field))
-    for field in ("peak_date", "sdd_date", "available_record_end"):
+    for field in ("peak_date", "sdd_date", "available_record_end", "amount_window_start", "amount_window_end"):
         q[field] = q[field].map(lambda value: _date(value, field, field == "sdd_date"))
     for row in q.itertuples(index=False):
         start = pd.Timestamp(row.wy - 1, 10, 1)
@@ -109,6 +112,10 @@ def validate_metrics(table: pd.DataFrame) -> pd.DataFrame:
         end = june if row.wy == 2026 else pd.Timestamp(row.wy, 9, 30)
         if row.available_record_end != end:
             raise ValueError("Incorrect available record endpoint")
+        if row.amount_window_start != start or row.amount_window_end != end:
+            raise ValueError("Incorrect amount-score window; historical October-September, WY2026 October-June required")
+        if row.amount_n_days != (end - start).days + 1:
+            raise ValueError("Incorrect complete paired amount-score day count")
         observed_peak = row.peak_date - pd.Timedelta(days=int(row.peak_error_days))
         if not (start <= row.peak_date <= june and start <= observed_peak <= june):
             raise ValueError("Model and implied observed peaks must be in October-June")
@@ -234,6 +241,10 @@ def main(argv=None):
         "figure": "Figure 3: SNOTEL performance", "metric_rows": len(table),
         "plotted_metric_count": len(table) * len(FIELDS),
         "censored_sdd_errors": int(table.sdd_error_days.isna().sum()),
+        "amount_windows": {str(wy): {"start": group.amount_window_start.iloc[0].strftime("%Y-%m-%d"),
+                                    "end": group.amount_window_end.iloc[0].strftime("%Y-%m-%d"),
+                                    "n_days": int(group.amount_n_days.iloc[0])}
+                           for wy, group in table.groupby("wy")},
         "metrics_sha256": sha256(args.metrics), "code_sha256": sha256(__file__),
         "font_sha256": sha256(args.font) if args.font else None,
         "font": "supplied font" if args.font else "Matplotlib bundled DejaVu Sans",

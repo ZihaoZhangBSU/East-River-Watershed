@@ -81,10 +81,16 @@ Model coverage declarations must equal 1, the target count must be 842, and
 the state hour must be 23 UTC. ASO denominators must match the fixed analysis
 area, 748679519.6193271 square meters. Dates, water years, complete calendars,
 finite values, and all 14 documented flights are checked before plotting.
-Outputs are a vector PDF, 600 dpi PNG, display-period statistics, and an
-execution record with hashes. Comparative annual metrics from the extractor
-use both the displayed period and a separate common October-June window;
-full-year display statistics should not be substituted for October-June results.
+Outputs are a vector PDF, 600 dpi PNG, record-period statistics, and an
+execution record with hashes. Primary amount summaries use full October-September
+WY2018-WY2025 and the available October-June WY2026 record, retaining snow-free
+days. `Fig2_model_statistics.csv` reports both model means, Noah-MP-minus-iSnobal
+bias, Pearson correlation, and relative mean difference. The relative difference
+is undefined when the iSnobal reference mean is zero. The extractor also supplies
+separate common October-June statistics. These two period definitions must remain
+distinct: differing record lengths do not provide equal-season absolute-mean
+anomalies. Peak/depletion timing and forcing diagnostics keep their separately
+declared October-June windows. The Figure 2 curves are unchanged.
 
 ## Validation and dependent figures
 
