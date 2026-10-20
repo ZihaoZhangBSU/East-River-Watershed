@@ -61,3 +61,21 @@ optional but records the independent fresh finite-coverage audit when supplied.
 Each calculation writes full-precision local CSV/JSON records with input hashes.
 The figures use exact 6.5-inch widths, the separately provided font, vector axes,
 and 600-dpi PNG output (S5's dense hexbin layer is rasterized in its PDF).
+
+4. Matching annual snowfall-input/retention supporting figure
+
+  python S_Other_Year_Annual_Input_Retention.py --accounting INPUTS/F8_baseline/F8_h1_recomputed.csv --font INPUTS/NimbusSans-Regular.ttf --output RESULTS/figures
+
+This standalone replay preserves the archived nine-year bars, net-gain line,
+styles and native-grid accounting. Its legend and Fig. 8(c)'s first category now
+both read "Snowfall input". This is a display-label change only: all supplied
+values, ratios, initial-state correction, October 2-March 15 input window,
+October 1-March 15 storage gain, and model-interface distinctions are unchanged.
+The program writes JHM_S_other_year_annual_input_retention.pdf/.png and a local
+execution record with code, input, font and output hashes. Data and fonts are
+provided separately and are not included in this repository.
+
+For the archived typography, the annual figure uses Matplotlib 3.10.9; the
+refreshed Fig. 8 uses 3.11.2. Use separate environments with those versions
+when exact rendering is required. The same accounting values are plotted in
+either version, but a version change can shift text placement slightly.

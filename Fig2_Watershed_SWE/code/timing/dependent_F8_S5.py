@@ -144,7 +144,7 @@ def plot_f8(daily, footprint, precipitation, account, start_event, end_event, ou
     bars = c.bar(np.arange(3), percentages, .55, color=['#2166AC', '#B2182B', '#B2182B'], edgecolor='white', lw=.4)
     for bar, pct in zip(bars, percentages):
         c.annotate(f'{pct:+.2f}%', (bar.get_x()+bar.get_width()/2, pct), xytext=(0, 4 if pct >= 0 else -4), textcoords='offset points', ha='center', va='bottom' if pct >= 0 else 'top', fontsize=8)
-    c.set_xticks(np.arange(3), ['Solid input\n197.0 → 205.2 mm', 'Net SWE gain\n146.3 → 117.6 mm', 'Inferred retention G/S\n0.742 → 0.573'])
+    c.set_xticks(np.arange(3), ['Snowfall input\n197.0 → 205.2 mm', 'Net SWE gain\n146.3 → 117.6 mm', 'Inferred retention G/S\n0.742 → 0.573'])
     c.axhline(0, color='.2', lw=.65); c.set_ylim(-32, 13); c.set_yticks([-30, -20, -10, 0, 10]); c.set_ylabel('Relative difference (%)')
     panel(c, '(c)', 'Native-grid accounting to 15 March')
     for ext in ['pdf', 'png']: fig.savefig(out/f'JHM_F8_WY2026_snow_storage_diagnosis.{ext}', dpi=600)
