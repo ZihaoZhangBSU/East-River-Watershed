@@ -92,22 +92,67 @@ def load_inputs(data_dir: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
     return model, aso
 
 
+def paired_model_statistics(isnobal: np.ndarray, noahmp: np.ndarray) -> dict[str, float]:
+    """Daily intermodel agreement, with iSnobal as the relative-bias reference.
+
+    Inputs are the same finite paired values that are plotted. Finite zeros
+    remain; incomplete pairs are rejected rather than silently changing the
+    period or spatial support. Pearson r is undefined for a constant series;
+    relative MB is undefined when the iSnobal mean is zero.
+    """
+    i = np.asarray(isnobal, dtype=np.float64)
+    n = np.asarray(noahmp, dtype=np.float64)
+    if i.ndim != 1 or n.ndim != 1 or i.shape != n.shape or not len(i):
+        raise ValueError("Daily model statistics require nonempty, equally sized 1D paired series")
+    if not np.isfinite(i).all() or not np.isfinite(n).all():
+        raise ValueError("Daily model statistics require the finite pairs used in the plot")
+    mean_i, mean_n = float(i.mean()), float(n.mean())
+    mb = float((n - i).mean())
+    i_centered, n_centered = i - mean_i, n - mean_n
+    denominator = np.sqrt(np.dot(i_centered, i_centered) *
+                          np.dot(n_centered, n_centered))
+    r = float(np.dot(i_centered, n_centered) / denominator) if denominator > 0 else np.nan
+    return {
+        "pearson_r": r,
+        "mean_bias_noah_minus_isnobal_mm": mb,
+        "mean_swe_isnobal_mm": mean_i,
+        "mean_swe_noahmp_mm": mean_n,
+        "relative_difference_noah_vs_isnobal_pct": 100 * mb / mean_i if mean_i != 0 else np.nan,
+    }
+
+
 def model_statistics(model: pd.DataFrame, aso: pd.DataFrame) -> pd.DataFrame:
     records = []
     for wy, q in model.groupby("wy", sort=True):
-        mean_i = float(q.swe_i_mm.mean())
-        mean_n = float(q.swe_n_mm.mean())
         records.append({
             "wy": int(wy), "start_date": q.date.min().date().isoformat(),
             "end_date": q.date.max().date().isoformat(), "n_dates": len(q),
-            "pearson_r": float(q.swe_i_mm.corr(q.swe_n_mm)),
-            "mean_bias_noah_minus_isnobal_mm": float((q.swe_n_mm - q.swe_i_mm).mean()),
-            "mean_swe_isnobal_mm": mean_i,
-            "mean_swe_noahmp_mm": mean_n,
-            "relative_difference_noah_vs_isnobal_pct": 100 * (mean_n / mean_i - 1) if mean_i != 0 else np.nan,
+            **paired_model_statistics(q.swe_i_mm.to_numpy(), q.swe_n_mm.to_numpy()),
             "aso_flight_count": int(aso.wy.eq(wy).sum()),
         })
     return pd.DataFrame(records)
+
+
+def statistics_annotation(row: pd.Series) -> str:
+    """Format the three display statistics without turning undefined values into zero."""
+    r = f"{row.pearson_r:.3f}" if np.isfinite(row.pearson_r) else "NA"
+    mb = f"{row.mean_bias_noah_minus_isnobal_mm:+.1f} mm"
+    relative = row.relative_difference_noah_vs_isnobal_pct
+    rmb = f"{relative:+.1f}%" if np.isfinite(relative) else "NA"
+    return f"r = {r}\nMB = {mb}\nrMB = {rmb}"
+
+
+def statistics_definitions() -> dict[str, str]:
+    return {
+        "comparison": "Daily Noah-MP and remapped iSnobal watershed means; intermodel agreement, not ASO validation",
+        "support": "Both models use the same fixed 842 Noah-MP targets and fractional watershed-area weights; 2300 UTC states",
+        "period": "Every plotted date, including snow-free days: October-September WY2018-WY2025; October-June WY2026",
+        "pearson_r": "Pearson correlation of paired daily model means; undefined if either series is constant",
+        "MB_mm": "mean(Noah-MP SWE - iSnobal SWE), in millimeters",
+        "rMB_percent": "100 * MB / mean(iSnobal SWE); undefined if the iSnobal mean is zero",
+        "undefined_display": "NA; never converted to zero",
+        "aso": "All 14 unfiltered flight markers remain unchanged; none enters these daily intermodel statistics",
+    }
 
 
 def render(model: pd.DataFrame, aso: pd.DataFrame, output_dir: Path, font: Path | None) -> list[Path]:
@@ -129,6 +174,7 @@ def render(model: pd.DataFrame, aso: pd.DataFrame, output_dir: Path, font: Path 
                                  aso.aso_watershed_mean_mm.to_numpy()])
     lower = min(0.0, math.floor(float(all_values.min()) / 50) * 50)
     upper = max(50.0, math.ceil(float(all_values.max()) / 50) * 50)
+    statistics = model_statistics(model, aso).set_index("wy")
     markers = 0
     for i, (ax, wy) in enumerate(zip(axes.flat, YEARS)):
         q, a = model[model.wy.eq(wy)], aso[aso.wy.eq(wy)]
@@ -148,6 +194,10 @@ def render(model: pd.DataFrame, aso: pd.DataFrame, output_dir: Path, font: Path 
         ax.text(0.02, 0.98, f"({chr(97+i)})", transform=ax.transAxes,
                 ha="left", va="top", fontsize=8,
                 bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.8, "pad": 0.5})
+        ax.text(0.98, 0.98, statistics_annotation(statistics.loc[wy]),
+                transform=ax.transAxes, ha="right", va="top", fontsize=6.5,
+                linespacing=1.12,
+                bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.9, "pad": 0.8})
     if markers != 14:
         raise AssertionError("The figure must plot all 14 ASO flights")
     fig.supylabel("Watershed SWE (mm)", x=0.012, fontsize=8)
@@ -157,6 +207,9 @@ def render(model: pd.DataFrame, aso: pd.DataFrame, output_dir: Path, font: Path 
         Line2D([], [], color="black", marker="o", linestyle="", markersize=3,
                label="ASO (flight coverage)"),
     ], loc="upper center", bbox_to_anchor=(0.5, 0.995), ncol=3, frameon=False)
+    fig.text(0.54, 0.951,
+             "Daily model comparison: MB = Noah-MP - iSnobal; rMB = 100 x MB / mean(iSnobal)",
+             ha="center", va="center", fontsize=6.5)
     paths = []
     for suffix in ("pdf", "png"):
         path = output_dir / f"JHM_F2_watershed_swe.{suffix}"
@@ -179,6 +232,8 @@ def main() -> None:
     figures = render(model, aso, args.output_dir, args.font)
     stats_path = args.output_dir / "Fig2_model_statistics.csv"
     model_statistics(model, aso).to_csv(stats_path, index=False)
+    definitions_path = args.output_dir / "Fig2_statistics_definitions.json"
+    definitions_path.write_text(json.dumps(statistics_definitions(), indent=2) + "\n", encoding="utf-8")
     info = {
         "figure": "Fig. 2 - Noah-MP-grid area-weighted watershed SWE",
         "operation": "Figure replay from verified spatial-cache aggregation and raw unfiltered ASO remapping; no model simulation",
@@ -190,13 +245,14 @@ def main() -> None:
         "aso_support": "Area average of valid supplied source pixels (including finite zeros) in each full target; retain target when full-cell source-valid area fraction >=0.5; then fractional watershed area weighting of retained targets",
         "aso_coverage_denominator": "Fixed 842-target fractional watershed area; coverage describes retained target area, not exact native observed polygon area",
         "statistics_window": "Full October-September WY2018-WY2025; October-June WY2026. Statistics retain every displayed date, including snow-free days. The extractor separately supplies common October-June sensitivity metrics.",
+        "display_statistics": statistics_definitions(),
         "comparison_limit": "ASO markers have flight-specific footprints. Direct matched-flight comparisons must use data/aso/matched_flight_basin_means.csv, which samples all three on identical retained targets.",
         "aso_mean_range_mm": [float(aso.aso_watershed_mean_mm.min()), float(aso.aso_watershed_mean_mm.max())],
         "aso_coverage_range": [float(aso.aso_valid_area_fraction.min()), float(aso.aso_valid_area_fraction.max())],
         "inputs_sha256": {p.name: sha256(p) for p in [
             args.data_dir / "models/Fig2_common_grid_daily.csv",
             args.data_dir / "aso/aso_common_grid_flights.csv"] + ([args.font] if args.font else [])},
-        "outputs_sha256": {p.name: sha256(p) for p in figures + [stats_path]},
+        "outputs_sha256": {p.name: sha256(p) for p in figures + [stats_path, definitions_path]},
     }
     receipt = args.output_dir / "Fig2_execution.json"
     receipt.write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")

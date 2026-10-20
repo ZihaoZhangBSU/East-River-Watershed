@@ -81,8 +81,21 @@ Model coverage declarations must equal 1, the target count must be 842, and
 the state hour must be 23 UTC. ASO denominators must match the fixed analysis
 area, 748679519.6193271 square meters. Dates, water years, complete calendars,
 finite values, and all 14 documented flights are checked before plotting.
-Outputs are a vector PDF, 600 dpi PNG, record-period statistics, and an
-execution record with hashes. Primary amount summaries use full October-September
+Outputs are a vector PDF, 600 dpi PNG, record-period statistics, a JSON file
+defining the display statistics, and an execution record with hashes.
+Each panel displays daily **intermodel agreement**, not ASO validation:
+
+- `r`: Pearson correlation of the paired daily watershed means.
+- `MB`: mean(Noah-MP minus iSnobal), in millimeters.
+- `rMB`: 100 times MB divided by mean iSnobal SWE, in percent.
+
+The iSnobal series is the reference for relative MB; the shared figure note
+identifies the sign and denominator. The original 14 ASO markers, daily curves,
+axes and periods remain unchanged. No ASO value enters these statistics.
+Undefined correlation (a constant series) or relative MB (zero iSnobal mean)
+is displayed as `NA`, never as zero. Nonfinite pairs abort the calculation.
+
+Primary amount summaries use full October-September
 WY2018-WY2025 and the available October-June WY2026 record, retaining snow-free
 days. `Fig2_model_statistics.csv` reports both model means, Noah-MP-minus-iSnobal
 bias, Pearson correlation, and relative mean difference. The relative difference
