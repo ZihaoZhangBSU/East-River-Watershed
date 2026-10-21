@@ -1,4 +1,4 @@
-"""Replay Fig. 4 at its final 5.85-inch print width from verified daily tables.
+"""Replay Fig. 4 as a short 5.85 x 3.40-inch plot from verified daily tables.
 
 No raw extraction, model rerun, timing recalculation, or scientific resampling.
 Place the resulting PDF at 0.90 times the manuscript text width when that width is
@@ -26,7 +26,7 @@ STATIONS = {380: "Butte", 737: "Schofield Pass", 1141: "Upper Taylor*"}
 COLORS = {"SNOTEL": "#222222", "iSnobal": "#0072B2", "Noah-MP": "#D55E00"}
 GOLD = "#e9b94a"
 PRINT_WIDTH_IN = 5.85
-PRINT_HEIGHT_IN = 5.67
+PRINT_HEIGHT_IN = 3.40
 
 
 def sha256(path):
@@ -87,8 +87,9 @@ def configure_font(font):
 def build_figure(daily, timing):
     markers = validate_inputs(daily, timing)
     fig, axes = plt.subplots(3, 1, figsize=(PRINT_WIDTH_IN, PRINT_HEIGHT_IN), sharex=True)
-    # These normalized margins and all artist specifications match the accepted replay.
-    fig.subplots_adjust(left=.12, right=.98, top=.91, bottom=.07, hspace=.27)
+    # Short panels retain the 8 pt print type; titles sit inside the snow-free
+    # upper-right corner so their rows no longer consume inter-panel space.
+    fig.subplots_adjust(left=.12, right=.98, top=.89, bottom=.105, hspace=.13)
     for index, (ax, (sid, name)) in enumerate(zip(axes, STATIONS.items())):
         f = daily.loc[daily.station_id.eq(sid)].sort_values("date")
         ax.axvspan(pd.Timestamp("2026-03-18"), pd.Timestamp("2026-03-22"),
@@ -103,7 +104,7 @@ def build_figure(daily, timing):
             ax.plot(peak, value, "o", ms=3, color=COLORS[model])
             ax.plot(pd.Timestamp(t.sdd_date), 10, "v", ms=4, color=COLORS[model])
         ax.set_ylabel("SWE (mm)")
-        ax.set_title(name, loc="right")
+        ax.set_title(name, loc="right", y=.91, pad=0, va="top")
         ax.set_ylim(bottom=-8)
         ax.xaxis.set_major_locator(mdates.MonthLocator())
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%b"))
