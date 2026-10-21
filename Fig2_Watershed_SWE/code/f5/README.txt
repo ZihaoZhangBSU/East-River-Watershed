@@ -1,26 +1,42 @@
-Fig. 5 (SWE) and supplemental ASO depth spatial performance
+Fig. 5: overall SWE and depth spatial performance
 
 Fig5_ASO_Performance.py recomputes all fourteen SWE/depth flight comparisons and
 the lower/middle/upper elevation summaries. It shares the portable validated
 extract_fig2_common_aso.py remapping module at the figure folder's top level.
-The plotter emits 6.5-inch-wide figures with 8-point text:
-  JHM_F5_aso_performance.pdf/png: SWE MB (a), RMSE (b), spatial Pearson r (c).
-  JHM_S_ASO_depth_performance.pdf/png: depth MB (a) and RMSE (b).
-Both use the same fourteen flights, unchanged full-precision scores and paired
-supports, colors, ASO-mean marker areas, and WY2026 shading. MB is model minus
-ASO. The split changes presentation only; it does not change a score or run a
-snow-model simulation. The depth figure's supplement number is set by the paper.
+The default plotter emits one 6.5 x 7.2-inch main figure with 8.05-point text:
+  JHM_F5_aso_performance.pdf/png
+  Top row: SWE MB (a), RMSE (b), spatial Pearson r (c).
+  Bottom row: depth MB (d), RMSE (e), spatial Pearson r (f).
+Both rows show all fourteen chronological flights and both models. All score
+values, masks, colors, marker areas and WY2026 shading remain unchanged. The
+new depth correlation panel uses the already validated scores. No flights are
+pooled and no snow-model simulation is run. MB/RMSE units (mm) appear in panel
+titles; r is dimensionless. All metric axes are shared across variable rows:
+  MB [-300,200] mm, ticks -300,-150,0,150.
+  RMSE [0,500] mm, ticks 0,250,500.
+  Spatial r [0.65,1.0], ticks 0.7,0.8,0.9,1.0.
+For future validated tables whose scores exceed these defaults, shared limits
+expand to retain every finite value; valid zero/negative r are not clipped.
+The main figure has separate ASO-mean marker-area legends for SWE and depth.
+SWE reference=300 mm (legend samples 100,300,600); depth reference=1000 mm
+(samples 300,1000,2000). Noah squares use area=16*ASOmean/reference pt^2;
+open iSnobal circles use size=4*area/pi for the same enclosed marker area.
+At the manuscript's 6.476-inch placement, text is at least 8.02 points.
 
 Replay already computed, corrected full-precision scores without reading raw
 rasters (complete canonical F5_elevation_metrics_corrected.csv, 224 rows):
   python code/f5/Fig5_ASO_Performance.py \
     --scores-csv data/f5_boundary/F5_elevation_metrics_corrected.csv \
     --output-directory data/f5_replay --figure-directory figures \
-    --font assets/NimbusSans-Regular.ttf --figure-selection swe
-Use --figure-selection swe for a main-figure-only revision; it never writes
-the accepted supplemental depth PDF/PNG. The default both retains the earlier
-two-figure workflow, and depth selects only the unchanged two-panel depth plot.
-The depth plot's numerical values and artist geometry have not changed.
+    --font assets/NimbusSans-Regular.ttf --figure-selection both
+The default both produces only the six-panel main asset. It never writes the
+former JHM_S_ASO_depth_performance.pdf/png, which should be preserved as a prior
+accepted asset. The same swe/depth command-line choices remain available as
+single-variable three-panel audit exports, with distinct output basenames:
+  --figure-selection swe   -> JHM_F5_swe_audit.pdf/png
+  --figure-selection depth -> JHM_F5_depth_audit.pdf/png
+These audit-only names replace the older per-variable output names so an audit
+cannot overwrite either the new main figure or the accepted depth supplement.
 Replay validates the exact schema, all fourteen flight dates, the complete
 model/variable/elevation keys, finite required scores, relative-score consistency,
 and elevation support-count partitions. It also refuses common marker sizing
@@ -58,7 +74,9 @@ Run independent numeric and plot-input verification after generation:
   python code/f5/verify_f5_numeric.py --data-directory data/f5_boundary
 This independently checks all 224 model/variable/elevation rows, including
 paired counts, reference means, MB, RMSE, Pearson r, RMB, RRMSE, and all selected
-plotted marker positions (84 for SWE-only; 140 for both figures).
+plotted marker positions (84 for a single-variable audit; 168 for the main figure
+when all correlations are defined). The marker manifest counts actual nonmissing
+scores, including valid zero, rather than treating unavailable r as a marker.
 
 Operator and interpretation
   SWE/depth honor their own NoData/masks/nonfinite values; finite zeros,
@@ -73,15 +91,14 @@ Operator and interpretation
   whose paired reference supports differ; the actual fourteen model pairs have
   coincident support. Saved model states are D23 UTC, not exact ASO flight time.
   Spatial r is Pearson correlation across the paired target-cell ASO and model
-  SWE values separately for each flight and model. It is neither a daily
+  SWE or depth values separately for each flight and model. It is neither a daily
   temporal correlation nor r squared. No flights are pooled. An undefined
   correlation (constant field or insufficient pairs) is recorded as missing
   and marked NA, never zero. Exactly zero is a valid plotted correlation.
-  The r axis displays the finite score range with padding bounded by [-1,1],
-  with explicit labelled ticks. SWE MB/RMSE values, areas, colors and supports
-  are unchanged by adding the third panel.
+  SWE and depth keep independent variable-specific masks and paired supports.
+  Shared plot axes do not replace those masks or combine spatial observations.
 
-Outputs include two vector PDFs/600-dpi PNGs, full precision all-flight/elevation
+Outputs include one vector PDF/600-dpi PNG, full precision all-flight/elevation
 scores, coverage audit, legacy-unpadded versus corrected metric differences,
 optional previous-displayed-value comparisons, source/output hashes and figure
 marker placement records. Preserve the original figure/table assets separately.

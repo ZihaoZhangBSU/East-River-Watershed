@@ -56,7 +56,7 @@ def main():
     audit=list(csv.DictReader((d/'F5_marker_placement_audit.csv').open()))
     # New main Fig. 5 adds per-flight spatial r. A replay may intentionally
     # select only SWE or depth, avoiding writes to other accepted figures.
-    expected_metrics={'SWE':('mb_mm','rmse_mm','r'),'Depth':('mb_mm','rmse_mm')}
+    expected_metrics={'SWE':('mb_mm','rmse_mm','r'),'Depth':('mb_mm','rmse_mm','r')}
     variables_present={point['variable'] for point in audit}
     assert variables_present and variables_present<=set(expected_metrics)
     expected_keys={(str(date),var,metric) for date in dates

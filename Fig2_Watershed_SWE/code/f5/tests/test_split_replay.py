@@ -76,20 +76,21 @@ class ReplayTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'common ASO reference support'):
                 f5.plot(rows,self.directory,None)
 
-    def test_two_figures_contain_all_140_markers_and_14_dates(self):
+    def test_one_combined_figure_has_all_168_markers_and_dates_in_both_rows(self):
         figures=[]
         def capture(fig,*args,**kwargs):
             if fig not in figures:figures.append(fig)
         with patch.object(f5.plt.Figure,'savefig',capture):
             audit=f5.plot(self.rows,self.directory,None)
-        self.assertEqual(len(figures),2)
-        self.assertEqual(len(audit),70)
-        self.assertEqual([len(fig.axes) for fig in figures],[3,2])
+        self.assertEqual(len(figures),1)
+        self.assertEqual(len(audit),84)
+        self.assertEqual([len(fig.axes) for fig in figures],[6])
         for fig in figures:
-            self.assertEqual(tuple(fig.get_size_inches()),(6.5,5.3))
+            self.assertEqual(tuple(fig.get_size_inches()),(6.5,7.2))
             self.assertEqual(sum(len(ax.collections) for ax in fig.axes),28*len(fig.axes))
-            self.assertEqual([text.get_text() for text in fig.axes[0].get_yticklabels()],list(f5.FLIGHT_DATES))
-            self.assertTrue(all(text.get_fontsize()>=8 for ax in fig.axes
+            for index in (0,3):
+                self.assertEqual([text.get_text() for text in fig.axes[index].get_yticklabels()],list(f5.FLIGHT_DATES))
+            self.assertTrue(all(text.get_fontsize()>=8.05 for ax in fig.axes
                                 for text in ax.get_xticklabels()+ax.get_yticklabels()))
         self.assertEqual({r['variable'] for r in audit[:42]},{'SWE'})
         self.assertEqual({r['variable'] for r in audit[42:]},{'Depth'})
@@ -101,13 +102,14 @@ class ReplayTests(unittest.TestCase):
             if fig not in figures:figures.append(fig)
         with patch.object(f5.plt.Figure,'savefig',capture):
             audit=f5.plot(self.rows,self.directory,None,'swe')
-        self.assertEqual(saved,['JHM_F5_aso_performance.pdf','JHM_F5_aso_performance.png'])
+        self.assertEqual(saved,['JHM_F5_swe_audit.pdf','JHM_F5_swe_audit.png'])
         self.assertEqual(len(figures),1)
         self.assertEqual(len(audit),42)
         self.assertEqual([r['metric'] for r in audit[28:]],['r']*14)
         self.assertEqual([r['date'] for r in audit[28:]],list(f5.FLIGHT_DATES))
         self.assertTrue(all(r['isnobal_x']==.8 and r['noahmp_x']==.8 for r in audit[28:]))
-        self.assertEqual(figures[0].axes[2].get_xlabel(),'Pearson r')
+        self.assertEqual(figures[0].axes[2].get_title(),'SWE spatial r')
+        self.assertEqual(figures[0].axes[2].get_xlabel(),'')
 
     def test_zero_correlation_plots_but_missing_correlation_is_explicit(self):
         rows=copy.deepcopy(self.rows)
@@ -123,26 +125,60 @@ class ReplayTests(unittest.TestCase):
         self.assertTrue(any(text.get_text()=='N: NA' for text in ax.texts))
         self.assertEqual(audit[28]['isnobal_x'],0.)
         self.assertIsNone(audit[28]['noahmp_x'])
+        self.assertEqual(f5.plotted_marker_count(audit),83)
 
-    def test_depth_only_retains_accepted_two_panel_geometry(self):
+    def test_depth_only_audit_has_three_metrics_and_unique_name(self):
         figures=[]
-        with patch.object(f5.plt.Figure,'savefig',lambda fig,*a,**k:figures.append(fig)):
+        saved=[]
+        def capture(fig,path,**kwargs):
+            figures.append(fig);saved.append(Path(path).name)
+        with patch.object(f5.plt.Figure,'savefig',capture):
             audit=f5.plot(self.rows,self.directory,None,'depth')
-        self.assertEqual(len(audit),28)
+        self.assertEqual(len(audit),42)
         self.assertEqual({r['variable'] for r in audit},{'Depth'})
-        self.assertEqual(len(figures[0].axes),2)
+        self.assertEqual(len(figures[0].axes),3)
+        self.assertEqual(saved,['JHM_F5_depth_audit.pdf','JHM_F5_depth_audit.png'])
+        self.assertEqual([r['metric'] for r in audit[28:]],['r']*14)
+        self.assertEqual([r['panel'] for r in audit[28:]],[6]*14)
 
     def test_invalid_figure_selection_rejected(self):
         with self.assertRaises(ValueError):f5.plot(self.rows,self.directory,None,'unknown')
 
     def test_main_only_manifest_excludes_preexisting_depth_sentinel(self):
-        for stem in ('JHM_F5_aso_performance','JHM_S_ASO_depth_performance'):
+        for stem in ('JHM_F5_aso_performance','JHM_F5_swe_audit','JHM_S_ASO_depth_performance'):
             for extension in ('pdf','png'):
                 (self.directory/f'{stem}.{extension}').write_bytes(b'preexisting sentinel')
         selected=f5.generated_figures(self.directory,'swe')
         self.assertEqual([p.name for p in selected],
-            ['JHM_F5_aso_performance.pdf','JHM_F5_aso_performance.png'])
+            ['JHM_F5_swe_audit.pdf','JHM_F5_swe_audit.png'])
         self.assertEqual((self.directory/'JHM_S_ASO_depth_performance.pdf').read_bytes(),b'preexisting sentinel')
+
+    def test_combined_output_never_writes_or_claims_accepted_depth_asset(self):
+        sentinel=self.directory/'JHM_S_ASO_depth_performance.pdf'
+        sentinel.write_bytes(b'accepted depth sentinel')
+        saved=[]
+        def capture(fig,path,**kwargs):
+            Path(path).write_bytes(b'combined output');saved.append(Path(path).name)
+        with patch.object(f5.plt.Figure,'savefig',capture):
+            f5.plot(self.rows,self.directory,None)
+        self.assertEqual(saved,['JHM_F5_aso_performance.pdf','JHM_F5_aso_performance.png'])
+        self.assertEqual([p.name for p in f5.generated_figures(self.directory,'both')],saved)
+        self.assertEqual(sentinel.read_bytes(),b'accepted depth sentinel')
+
+    def test_current_shared_axes_and_safe_future_expansion(self):
+        figures=[]
+        with patch.object(f5.plt.Figure,'savefig',lambda fig,*a,**k:figures.append(fig)):
+            f5.plot(self.rows,self.directory,None)
+        for top,bottom,expected in zip(figures[0].axes[:3],figures[0].axes[3:],
+                ((-300.,200.),(0.,500.),(.65,1.))):
+            self.assertEqual(top.get_xlim(),expected)
+            self.assertEqual(bottom.get_xlim(),expected)
+        rows=copy.deepcopy(self.rows)
+        for row in rows:
+            if row['variable']=='Depth' and row['elevation_band']=='All':row['r']=-.8
+        limits=f5.performance_limits(rows,{'SWE','Depth'})
+        self.assertLessEqual(limits['r'][0],-.8)
+        self.assertEqual(limits['r'][1],1.)
 
 
 if __name__=='__main__':unittest.main()

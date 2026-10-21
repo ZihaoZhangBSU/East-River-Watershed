@@ -128,8 +128,9 @@ Related generators retain figure-specific names:
 - [Figure 5 ASO performance](code/f5/README.txt): corrected full-target ASO
   coverage, unfiltered SWE/depth scores, per-flight spatial correlation, and
   independent verification.
-- [Supplemental SWE elevation performance](code/f5/README_elevation.md):
-  flight-by-elevation bias, RMSE and spatial correlation with explicit NA cells.
+- [Supplemental SWE and depth elevation performance](code/f5/README_elevation.md):
+  separate flight-by-elevation bias, RMSE and spatial correlation figures with
+  variable-specific support, shared metric scales and explicit NA cells.
 - [Figure 6 timing and dependent Figure 8/S5 updates](code/timing/README.txt):
   timing tables, revised conditional-loss dates, and separated native accounting.
 - [Supplemental S2 three-source density](code/S2_Three_Source_Density.py):

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate Fig. 5 (SWE) and the matching supplemental ASO depth performance.
+"""Generate Fig. 5: overall SWE and depth MB, RMSE and spatial Pearson r.
 
 Use --scores-csv to replay a complete validated 224-row corrected score table
 without reopening rasters. Otherwise recompute from unfiltered raw ASO
@@ -147,12 +147,34 @@ def performance_table(rows,variable,path):
     path.write_text('\n'.join(lines)+'\n',encoding='utf-8')
 
 
-def plot(rows,figure_directory,font_path,figure_selection='both'):
-    """Plot per-flight spatial scores without pooling dates.
+def figure_basename(figure_selection):
+    """Keep audit-only exports distinct from the combined publication asset."""
+    return {'both':'JHM_F5_aso_performance','swe':'JHM_F5_swe_audit',
+            'depth':'JHM_F5_depth_audit'}[figure_selection]
 
-    SWE contains MB, RMSE and spatial Pearson r. Depth retains its accepted
-    two-panel layout. Select ``swe`` to avoid rewriting a frozen depth asset.
-    An unavailable r is never plotted as zero; its row is explicitly marked NA.
+
+def performance_limits(rows,variables):
+    """Shared metric axes; expand safely if future valid scores exceed defaults."""
+    limits={'mb_mm':(-300.,200.),'rmse_mm':(0.,500.),'r':(.65,1.)}
+    for metric,(lo,hi) in list(limits.items()):
+        values=[r[metric] for r in rows if r['variable'] in variables
+                and r['elevation_band']=='All' and r[metric] is not None]
+        if values:
+            padding=.04 if metric=='r' else 20.
+            if min(values)<lo:lo=min(values)-padding
+            if max(values)>hi:hi=max(values)+padding
+            if metric=='r':lo,hi=max(-1.,lo),min(1.,hi)
+        limits[metric]=(lo,hi)
+    return limits
+
+
+def plot(rows,figure_directory,font_path,figure_selection='both'):
+    """Plot separate flight/model spatial scores; no pooling across dates.
+
+    The default is one six-panel figure: SWE top, depth bottom; columns are
+    MB, RMSE and spatial Pearson r. Single-variable audit modes retain all
+    three metrics but use distinct output names and do not overwrite the
+    combined main figure or an accepted supplemental depth asset.
     """
     if figure_selection not in ('both','swe','depth'):
         raise ValueError('figure_selection must be both, swe, or depth')
@@ -161,24 +183,31 @@ def plot(rows,figure_directory,font_path,figure_selection='both'):
         font=font_manager.FontProperties(fname=font_path).get_name()
     else:
         font='DejaVu Sans'
-    plt.rcParams.update({'font.family':font,'font.size':8,'axes.labelsize':8,'axes.titlesize':8,
-      'xtick.labelsize':8,'ytick.labelsize':8,'legend.fontsize':8,'pdf.fonttype':42,'ps.fonttype':42,
-      'axes.linewidth':.6,'lines.linewidth':1.1,'savefig.facecolor':'white'})
+    font_size=8.05
+    plt.rcParams.update({'font.family':font,'font.size':font_size,
+      'axes.labelsize':font_size,'axes.titlesize':font_size,
+      'xtick.labelsize':font_size,'ytick.labelsize':font_size,'legend.fontsize':font_size,
+      'pdf.fonttype':42,'ps.fonttype':42,'axes.linewidth':.6,
+      'lines.linewidth':1.1,'savefig.facecolor':'white'})
     lookup={(r['date'],r['variable'],r['model']):r for r in rows if r['elevation_band']=='All'}
     dates=sorted({r['date'] for r in rows})
     colors={'iSnobal':'#0072B2','Noah-MP':'#D55E00'}
-    audit=[]
-    figure_directory.mkdir(exist_ok=True,parents=True)
-    for variable_number,(var,basename,ref) in enumerate([
-            ('SWE','JHM_F5_aso_performance',300),
-            ('Depth','JHM_S_ASO_depth_performance',1000)]):
-        if figure_selection!='both' and var.lower()!=figure_selection:
-            continue
-        metrics=('mb_mm','rmse_mm','r') if var=='SWE' else ('mb_mm','rmse_mm')
-        titles=(f'{var} bias',f'{var} RMSE','Spatial r') if var=='SWE' else (f'{var} bias',f'{var} RMSE')
-        fig,axs=plt.subplots(1,len(metrics),figsize=(6.5,5.3),sharey=True)
+    variables=[('SWE',300),('Depth',1000)]
+    if figure_selection!='both':
+        variables=[item for item in variables if item[0].lower()==figure_selection]
+    limits=performance_limits(rows,{var for var,_ in variables})
+    combined=len(variables)==2
+    fig,axs=plt.subplots(len(variables),3,figsize=(6.5,7.2 if combined else 5.3),
+                         sharey='row',squeeze=False)
+    if combined:
+        fig.subplots_adjust(left=.17,right=.985,top=.935,bottom=.105,wspace=.23,hspace=.48)
+    else:
         fig.subplots_adjust(left=.17,right=.985,top=.91,bottom=.18,wspace=.23)
-        for local_panel,(ax,metric,title) in enumerate(zip(axs,metrics,titles)):
+    audit=[]
+    for row_number,(var,ref) in enumerate(variables):
+        for column,(metric,title) in enumerate(zip(('mb_mm','rmse_mm','r'),
+                 (f'{var} MB (mm)',f'{var} RMSE (mm)',f'{var} spatial r'))):
+            ax=axs[row_number,column]
             for y,date in enumerate(dates):
                 i,n=lookup[date,var,'iSnobal'],lookup[date,var,'Noah-MP']
                 if date.startswith('2026'):
@@ -196,43 +225,57 @@ def plot(rows,figure_directory,font_path,figure_selection='both'):
                 if any(v is None for v in vals):
                     missing='/'.join(m for m,v in zip(('I','N'),vals) if v is None)
                     ax.text(.97,y,f'{missing}: NA',transform=ax.get_yaxis_transform(),
-                            ha='right',va='center',fontsize=8)
-                audit.append({'panel':(0 if var=='SWE' else 3)+local_panel+1,'date':date,'variable':var,'metric':metric,
+                            ha='right',va='center',fontsize=font_size)
+                panel=(0 if var=='SWE' else 3)+column+1
+                audit.append({'panel':panel,'date':date,'variable':var,'metric':metric,
                               'isnobal_x':vals[0],'noahmp_x':vals[1],'shared_y':y,
                               'aso_reference_mean_mm':observed,'enclosed_marker_area_pt2':area})
             if metric!='r':
                 ax.axvline(0,color='.5',lw=.6)
-            else:
-                values=[lookup[date,var,model]['r'] for date in dates for model,_ in MODELS
-                        if lookup[date,var,model]['r'] is not None]
-                # Show the observed range, explicitly labelled by axis ticks.
-                # Accommodate finite negative and exactly zero correlations.
-                lo,hi=(min(values),max(values)) if values else (-1.,1.)
-                padding=max(.04,.1*(hi-lo))
-                ax.set_xlim(max(-1.,lo-padding),min(1.,hi+padding))
-            ax.set_ylim(len(dates)-.4,-.8);ax.set_title(title);ax.set_xlabel('Pearson r' if metric=='r' else 'mm')
+            ax.set_xlim(limits[metric])
+            ax.set_ylim(len(dates)-.4,-.8);ax.set_title(title)
+            # Units are in panel titles, keeping row-specific size legends
+            # separate from the metric axes in the compact two-row layout.
+            ax.set_xlabel('')
             ax.set_yticks(range(len(dates)),dates);ax.tick_params(axis='y',length=0)
-            ax.xaxis.set_major_locator(MaxNLocator(3));ax.spines[['top','right','left']].set_visible(False)
-            ax.text(.02,.98,f'({chr(97+local_panel)})',transform=ax.transAxes,ha='left',va='top',fontsize=8,
-                    bbox={'facecolor':'white','edgecolor':'none','alpha':.8,'pad':.5})
-        fig.legend(handles=[Line2D([],[],ls='',marker=mk,color=colors[m],mfc='none' if m=='iSnobal' else colors[m],label=m,ms=4)
-                            for m,mk in [('iSnobal','o'),('Noah-MP','s')]],ncol=2,loc='upper center',frameon=False)
-        h=[Line2D([],[],ls='',marker='o',mfc='none',mec='.4',ms=np.sqrt(4*(16*v/ref)/np.pi),label=str(v))
+            defaults={'mb_mm':((-300.,200.),[-300,-150,0,150]),
+                      'rmse_mm':((0.,500.),[0,250,500]),
+                      'r':((.65,1.),[.7,.8,.9,1.])}
+            if limits[metric]==defaults[metric][0]:ax.set_xticks(defaults[metric][1])
+            else:ax.xaxis.set_major_locator(MaxNLocator(3))
+            ax.spines[['top','right','left']].set_visible(False)
+            panel=(0 if var=='SWE' else 3)+column
+            ax.text(.02,.98,f'({chr(97+panel)})',transform=ax.transAxes,ha='left',va='top',
+                    fontsize=font_size,bbox={'facecolor':'white','edgecolor':'none','alpha':.8,'pad':.5})
+        h=[Line2D([],[],ls='',marker='o',mfc='none',mec='.4',
+                  ms=np.sqrt(4*(16*v/ref)/np.pi),label=str(v))
            for v in ([100,300,600] if var=='SWE' else [300,1000,2000])]
-        fig.legend(handles=h,title=f'ASO {var.lower()} (mm)',loc='lower center',bbox_to_anchor=(.58,.002),ncol=3,
-                   frameon=False,fontsize=8,title_fontsize=8,handletextpad=.2,columnspacing=.6)
-        for extension in ['pdf','png']:
-            fig.savefig(figure_directory/f'{basename}.{extension}',dpi=600,facecolor='white')
-        plt.close(fig)
+        anchor=.505 if combined and row_number==0 else .002
+        fig.legend(handles=h,title=f'ASO {var.lower()} (mm)',loc='lower center',
+                   bbox_to_anchor=(.58,anchor),ncol=3,frameon=False,
+                   fontsize=font_size,title_fontsize=font_size,handletextpad=.2,columnspacing=.6)
+    fig.legend(handles=[Line2D([],[],ls='',marker=mk,color=colors[m],
+                    mfc='none' if m=='iSnobal' else colors[m],label=m,ms=4)
+                    for m,mk in [('iSnobal','o'),('Noah-MP','s')]],
+               ncol=2,loc='upper center',frameon=False)
+    figure_directory.mkdir(exist_ok=True,parents=True)
+    basename=figure_basename(figure_selection)
+    for extension in ('pdf','png'):
+        fig.savefig(figure_directory/f'{basename}.{extension}',dpi=600,facecolor='white')
+    plt.close(fig)
     return audit
 
 
 def generated_figures(directory,figure_selection):
-    """List only the assets generated by the requested presentation branch."""
-    names={'swe':'JHM_F5_aso_performance','depth':'JHM_S_ASO_depth_performance'}
-    selected=names.values() if figure_selection=='both' else (names[figure_selection],)
-    return sorted(directory/f'{name}.{extension}' for name in selected
-                  for extension in ('pdf','png') if (directory/f'{name}.{extension}').is_file())
+    """Manifest only the selected generated asset, excluding stale files."""
+    basename=figure_basename(figure_selection)
+    return [directory/f'{basename}.{extension}' for extension in ('pdf','png')
+            if (directory/f'{basename}.{extension}').is_file()]
+
+
+def plotted_marker_count(audit):
+    """Count finite displayed scores, retaining zero and excluding missing r."""
+    return sum(row[key] is not None for row in audit for key in ('isnobal_x','noahmp_x'))
 
 
 def main():
@@ -246,7 +289,7 @@ def main():
     parser.add_argument('--baseline-displayed-csv',type=Path)
     parser.add_argument('--font',type=Path)
     parser.add_argument('--figure-selection',choices=('both','swe','depth'),default='both',
-                        help='Plot both figures (default), only main SWE, or only supplemental depth')
+                        help='One main six-panel figure (both/default), or a distinct SWE/depth audit export')
     a=parser.parse_args()
     if a.scores_csv:
         if any((a.aso_directory,a.model_directory,a.flights,a.grid_weights,a.baseline_displayed_csv)):
@@ -259,8 +302,8 @@ def main():
         audit=plot(rows,a.figure_directory,a.font,a.figure_selection)
         write_csv(out/'F5_marker_placement_audit.csv',audit)
         manifest={'mode':'validated_score_replay','input_scores':{'file':a.scores_csv.name,'sha256':sha256(a.scores_csv)},
-          'score_rows':len(rows),'plotted_markers':2*len(audit),
-          'presentation':'Fig.5 SWE bias/RMSE/spatial Pearson r; supplemental depth bias/RMSE. Scientific scores unchanged.',
+          'score_rows':len(rows),'plotted_markers':plotted_marker_count(audit),
+          'presentation':'Fig.5 six panels: SWE top/depth bottom; MB, RMSE, spatial Pearson r columns. Scientific scores unchanged.',
           'figure_selection':a.figure_selection,
           'code_sha256':sha256(Path(__file__)),
           'font':({'file':a.font.name,'sha256':sha256(a.font)} if a.font else
