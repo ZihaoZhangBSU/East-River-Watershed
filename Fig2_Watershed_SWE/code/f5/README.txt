@@ -3,8 +3,8 @@ Fig. 5 (SWE) and supplemental ASO depth spatial performance
 Fig5_ASO_Performance.py recomputes all fourteen SWE/depth flight comparisons and
 the lower/middle/upper elevation summaries. It shares the portable validated
 extract_fig2_common_aso.py remapping module at the figure folder's top level.
-The plotter emits two matched 6.5-inch, two-panel figures with 8-point text:
-  JHM_F5_aso_performance.pdf/png: SWE MB (a) and RMSE (b).
+The plotter emits 6.5-inch-wide figures with 8-point text:
+  JHM_F5_aso_performance.pdf/png: SWE MB (a), RMSE (b), spatial Pearson r (c).
   JHM_S_ASO_depth_performance.pdf/png: depth MB (a) and RMSE (b).
 Both use the same fourteen flights, unchanged full-precision scores and paired
 supports, colors, ASO-mean marker areas, and WY2026 shading. MB is model minus
@@ -16,7 +16,11 @@ rasters (complete canonical F5_elevation_metrics_corrected.csv, 224 rows):
   python code/f5/Fig5_ASO_Performance.py \
     --scores-csv data/f5_boundary/F5_elevation_metrics_corrected.csv \
     --output-directory data/f5_replay --figure-directory figures \
-    --font assets/NimbusSans-Regular.ttf
+    --font assets/NimbusSans-Regular.ttf --figure-selection swe
+Use --figure-selection swe for a main-figure-only revision; it never writes
+the accepted supplemental depth PDF/PNG. The default both retains the earlier
+two-figure workflow, and depth selects only the unchanged two-panel depth plot.
+The depth plot's numerical values and artist geometry have not changed.
 Replay validates the exact schema, all fourteen flight dates, the complete
 model/variable/elevation keys, finite required scores, relative-score consistency,
 and elevation support-count partitions. It also refuses common marker sizing
@@ -53,8 +57,8 @@ Run shared remapping tests at the figure folder's tests/test_extract_fig2_common
 Run independent numeric and plot-input verification after generation:
   python code/f5/verify_f5_numeric.py --data-directory data/f5_boundary
 This independently checks all 224 model/variable/elevation rows, including
-paired counts, reference means, MB, RMSE, Pearson r, RMB, RRMSE, and all 112
-plotted marker positions.
+paired counts, reference means, MB, RMSE, Pearson r, RMB, RRMSE, and all selected
+plotted marker positions (84 for SWE-only; 140 for both figures).
 
 Operator and interpretation
   SWE/depth honor their own NoData/masks/nonfinite values; finite zeros,
@@ -68,6 +72,14 @@ Operator and interpretation
   The generator refuses silently assigning one ASO mean/marker size to models
   whose paired reference supports differ; the actual fourteen model pairs have
   coincident support. Saved model states are D23 UTC, not exact ASO flight time.
+  Spatial r is Pearson correlation across the paired target-cell ASO and model
+  SWE values separately for each flight and model. It is neither a daily
+  temporal correlation nor r squared. No flights are pooled. An undefined
+  correlation (constant field or insufficient pairs) is recorded as missing
+  and marked NA, never zero. Exactly zero is a valid plotted correlation.
+  The r axis displays the finite score range with padding bounded by [-1,1],
+  with explicit labelled ticks. SWE MB/RMSE values, areas, colors and supports
+  are unchanged by adding the third panel.
 
 Outputs include two vector PDFs/600-dpi PNGs, full precision all-flight/elevation
 scores, coverage audit, legacy-unpadded versus corrected metric differences,

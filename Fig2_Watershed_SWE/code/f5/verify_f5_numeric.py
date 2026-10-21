@@ -54,14 +54,27 @@ def main():
     with (d/'F5_independent_numeric_checks.csv').open('w',newline='') as stream:
         w=csv.DictWriter(stream,fieldnames=list(comparisons[0]));w.writeheader();w.writerows(comparisons)
     audit=list(csv.DictReader((d/'F5_marker_placement_audit.csv').open()))
-    assert len(audit)==56
+    # New main Fig. 5 adds per-flight spatial r. A replay may intentionally
+    # select only SWE or depth, avoiding writes to other accepted figures.
+    expected_metrics={'SWE':('mb_mm','rmse_mm','r'),'Depth':('mb_mm','rmse_mm')}
+    variables_present={point['variable'] for point in audit}
+    assert variables_present and variables_present<=set(expected_metrics)
+    expected_keys={(str(date),var,metric) for date in dates
+                   for var in variables_present for metric in expected_metrics[var]}
+    actual_keys=[(p['date'],p['variable'],p['metric']) for p in audit]
+    assert len(actual_keys)==len(set(actual_keys)) and set(actual_keys)==expected_keys
+    plotted_markers=0
     for point in audit:
         for model,column in [('iSnobal','isnobal_x'),('Noah-MP','noahmp_x')]:
-            expected=float(lookup[point['date'],point['variable'],model,'All'][point['metric']])
-            assert float(point[column])==expected
+            raw=lookup[point['date'],point['variable'],model,'All'][point['metric']]
+            if raw in ('','None'):
+                assert point[column] in ('','None')
+            else:
+                assert float(point[column])==float(raw)
+                plotted_markers+=1
     assert count==224
     result={'all_flight_model_variable_scores_checked':56,'all_elevation_rows_including_All_checked':count,
-            'paired_cell_counts_checked':count,'plotted_markers_checked':112,
+            'paired_cell_counts_checked':count,'plotted_markers_checked':plotted_markers,
             'maximum_absolute_difference':max_error,
             'difference_units':{'aso_mean_mm':'mm','mb_mm':'mm','rmse_mm':'mm','r':'dimensionless',
                                 'rmb_percent':'percentage points','rrmse_percent':'percentage points'},'passed':True,
@@ -79,7 +92,7 @@ def main():
             'file':'F5_independent_numeric_QA.json',
             'sha256':hashlib.sha256((d/'F5_independent_numeric_QA.json').read_bytes()).hexdigest(),
             'verifier_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-            'checked_rows':224,'checked_markers':112,'passed':True}
+            'checked_rows':224,'checked_markers':plotted_markers,'passed':True}
         manifest_path.write_text(json.dumps(manifest,indent=2,allow_nan=False)+'\n',encoding='utf-8')
     print(json.dumps(result,indent=2))
 

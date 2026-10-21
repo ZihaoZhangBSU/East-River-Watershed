@@ -49,5 +49,19 @@ class ScoreTests(unittest.TestCase):
             counts.append(int(mask.sum()))
         self.assertEqual(counts,[1,2,1])
 
+    def test_spatial_pearson_retains_sign_instead_of_r_squared(self):
+        observed=np.array([[0.,1.,2.]])
+        result=f5.scores(observed,np.array([[2.,1.,0.]]),np.ones((1,3),bool))
+        self.assertAlmostEqual(result['r'],-1.)
+
+    def test_constant_field_correlation_is_undefined_not_zero(self):
+        domain=np.ones((1,3),bool)
+        self.assertIsNone(f5.scores(np.array([[0.,1.,2.]]),np.ones((1,3)),domain)['r'])
+        self.assertIsNone(f5.scores(np.ones((1,3)),np.array([[0.,1.,2.]]),domain)['r'])
+
+    def test_nonconstant_zero_spatial_correlation_is_valid(self):
+        result=f5.scores(np.array([[-1.,0.,1.]]),np.array([[1.,-2.,1.]]),np.ones((1,3),bool))
+        self.assertEqual(result['r'],0.)
+
 if __name__=='__main__':
     unittest.main()
