@@ -89,7 +89,7 @@ Each panel displays daily **intermodel agreement**, not ASO validation:
 - `MB`: mean(Noah-MP minus iSnobal), in millimeters.
 - `rMB`: 100 times MB divided by mean iSnobal SWE, in percent.
 
-The iSnobal series is the reference for relative MB; the shared figure note
+The iSnobal series is the reference for relative MB; the manuscript caption
 identifies the sign and denominator. The original 14 ASO markers, daily curves,
 axes and periods remain unchanged. No ASO value enters these statistics.
 Undefined correlation (a constant series) or relative MB (zero iSnobal mean)

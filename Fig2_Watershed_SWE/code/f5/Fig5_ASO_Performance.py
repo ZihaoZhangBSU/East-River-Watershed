@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Recompute Fig. 5 from unfiltered raw ASO SWE/depth and saved model snapshots.
+"""Generate Fig. 5 (SWE) and the matching supplemental ASO depth performance.
+
+Use --scores-csv to replay a complete validated 224-row corrected score table
+without reopening rasters. Otherwise recompute from unfiltered raw ASO
+SWE/depth and saved model snapshots with the unchanged scientific operator.
 
 The ASO validity coverage operator is zero-padded over the complete target
 extent, fixing partial-source-edge normalization. Retain C_j>=0.5 separately
@@ -16,7 +20,9 @@ from __future__ import annotations
 import argparse,csv,json,platform,sys
 from pathlib import Path
 sys.dont_write_bytecode=True
-if not Path(__file__).with_name('extract_fig2_common_aso.py').is_file():
+if Path(__file__).with_name('extract_fig2_common_aso.py').is_file():
+    sys.path.insert(0,str(Path(__file__).resolve().parent))
+else:
     # In the public figure folder this file lives in code/f5/ and shares the
     # validated remapping module at the figure folder's top level.
     sys.path.insert(0,str(Path(__file__).resolve().parents[2]))
@@ -35,6 +41,64 @@ import extract_fig2_common_aso as remapping
 MODELS=[('iSnobal','isnobal_on_noah'),('Noah-MP','noah_native')]
 VARIABLES=[('SWE','SWE','swe'),('Depth','SD','snow_depth')]
 BANDS={'Lower':(None,2896.),'Middle':(2896.,3353.),'Upper':(3353.,None),'All':(None,None)}
+FLIGHT_DATES=('2018-03-31','2018-05-24','2019-04-07','2019-06-10',
+ '2022-04-21','2022-05-18','2023-04-01','2023-05-23','2024-04-03',
+ '2024-05-20','2025-04-07','2025-05-20','2026-03-18','2026-04-05')
+SCORE_COLUMNS=('date','water_year','variable','model','elevation_band','n_cells',
+ 'aso_mean_mm','mb_mm','rmse_mm','r','rmb_percent','rrmse_percent')
+
+
+def load_scores_csv(path):
+    """Validate the frozen fourteen-flight score schema before plotting.
+
+    This checks completeness and internal consistency, not the source-raster
+    operator; independently verify the scores from saved fields separately.
+    """
+    with path.open(newline='',encoding='utf-8-sig') as stream:
+        reader=csv.DictReader(stream)
+        if tuple(reader.fieldnames or ())!=SCORE_COLUMNS:
+            raise ValueError('Scores CSV must have the canonical 12-column schema')
+        rows=list(reader)
+    lookup={}
+    for row in rows:
+        key=tuple(row[k] for k in ('date','variable','model','elevation_band'))
+        if key in lookup:
+            raise ValueError(f'Duplicate score key: {key}')
+        try:
+            for k in ('water_year','n_cells'):
+                row[k]=int(row[k])
+            for k in SCORE_COLUMNS[6:]:
+                row[k]=None if row[k] in ('','None') else float(row[k])
+        except (TypeError,ValueError) as error:
+            raise ValueError(f'Invalid numeric score: {key}') from error
+        if row['n_cells']<=0 or row['water_year']!=int(row['date'][:4]):
+            raise ValueError(f'Invalid support count or water year: {key}')
+        for k in ('aso_mean_mm','mb_mm','rmse_mm'):
+            if row[k] is None or not np.isfinite(row[k]):
+                raise ValueError(f'Nonfinite required score {k}: {key}')
+        if row['rmse_mm']+1e-9<abs(row['mb_mm']):
+            raise ValueError(f'RMSE must be at least absolute MB: {key}')
+        if row['r'] is not None and (not np.isfinite(row['r']) or abs(row['r'])>1+1e-12):
+            raise ValueError(f'Invalid correlation: {key}')
+        for relative,metric in [('rmb_percent','mb_mm'),('rrmse_percent','rmse_mm')]:
+            expected=row[metric]/row['aso_mean_mm']*100 if row['aso_mean_mm'] else None
+            value=row[relative]
+            if (expected is None)!=(value is None) or (value is not None and
+                    (not np.isfinite(value) or not np.isclose(value,expected,rtol=1e-10,atol=1e-8))):
+                raise ValueError(f'Inconsistent relative score {relative}: {key}')
+        lookup[key]=row
+    expected={(date,var,model,band) for date in FLIGHT_DATES
+              for var in ('SWE','Depth') for model,_ in MODELS for band in BANDS}
+    if set(lookup)!=expected:
+        raise ValueError('Scores CSV must contain exactly all 224 canonical flight/model/variable/band rows')
+    for date in FLIGHT_DATES:
+        for var in ('SWE','Depth'):
+            for model,_ in MODELS:
+                parts=[lookup[date,var,model,band] for band in ('Lower','Middle','Upper')]
+                total=lookup[date,var,model,'All']
+                if sum(r['n_cells'] for r in parts)!=total['n_cells']:
+                    raise ValueError('Elevation-band support counts must partition All')
+    return rows
 
 
 def scores(observed,model,domain):
@@ -90,54 +154,84 @@ def plot(rows,figure_directory,font_path):
     else:
         font='DejaVu Sans'
     plt.rcParams.update({'font.family':font,'font.size':8,'axes.labelsize':8,'axes.titlesize':8,
-      'xtick.labelsize':7,'ytick.labelsize':7,'legend.fontsize':7,'pdf.fonttype':42,'ps.fonttype':42,
+      'xtick.labelsize':8,'ytick.labelsize':8,'legend.fontsize':8,'pdf.fonttype':42,'ps.fonttype':42,
       'axes.linewidth':.6,'lines.linewidth':1.1,'savefig.facecolor':'white'})
     lookup={(r['date'],r['variable'],r['model']):r for r in rows if r['elevation_band']=='All'}
     dates=sorted({r['date'] for r in rows})
     colors={'iSnobal':'#0072B2','Noah-MP':'#D55E00'}
-    fig,axs=plt.subplots(1,4,figsize=(6.5,5.3),sharey=True)
-    fig.subplots_adjust(left=.17,right=.985,top=.91,bottom=.18,wspace=.23)
     audit=[]
-    for p,(ax,(var,metric,title)) in enumerate(zip(axs,[('SWE','mb_mm','SWE bias'),('SWE','rmse_mm','SWE RMSE'),('Depth','mb_mm','Depth bias'),('Depth','rmse_mm','Depth RMSE')])):
-        for y,date in enumerate(dates):
-            i,n=lookup[date,var,'iSnobal'],lookup[date,var,'Noah-MP']
-            if date.startswith('2026'):
-                ax.axhspan(y-.5,y+.5,color='#e9b94a',alpha=.25,lw=0)
-            vals=[i[metric],n[metric]];ax.plot(vals,[y,y],color='.65',lw=.7)
-            if abs(i['aso_mean_mm']-n['aso_mean_mm'])>1e-8:
-                raise ValueError('Matched marker sizing requires common ASO reference mean')
-            observed=i['aso_mean_mm'];area=16*observed/(300 if var=='SWE' else 1000)
-            ax.scatter(vals[1],y,s=area,marker='s',color=colors['Noah-MP'],edgecolor='white',linewidth=.3,zorder=3)
-            ax.scatter(vals[0],y,s=4*area/np.pi,marker='o',facecolor='none',edgecolor=colors['iSnobal'],linewidth=.8,zorder=4)
-            audit.append({'panel':p+1,'date':date,'variable':var,'metric':metric,
-                          'isnobal_x':vals[0],'noahmp_x':vals[1],'shared_y':y,
-                          'aso_reference_mean_mm':observed,'enclosed_marker_area_pt2':area})
-        ax.axvline(0,color='.5',lw=.6);ax.set_ylim(len(dates)-.4,-.8);ax.set_title(title);ax.set_xlabel('mm')
-        ax.set_yticks(range(len(dates)),dates);ax.tick_params(axis='y',length=0)
-        ax.xaxis.set_major_locator(MaxNLocator(3));ax.spines[['top','right','left']].set_visible(False)
-        ax.text(.02,.98,f'({chr(97+p)})',transform=ax.transAxes,ha='left',va='top',fontsize=8,
-                bbox={'facecolor':'white','edgecolor':'none','alpha':.8,'pad':.5})
-    fig.legend(handles=[Line2D([],[],ls='',marker=mk,color=colors[m],mfc='none' if m=='iSnobal' else colors[m],label=m,ms=4)
-                        for m,mk in [('iSnobal','o'),('Noah-MP','s')]],ncol=2,loc='upper center',frameon=False)
-    for var,ref,xx in [('SWE',300,.36),('Depth',1000,.79)]:
+    figure_directory.mkdir(exist_ok=True,parents=True)
+    for variable_number,(var,basename,ref) in enumerate([
+            ('SWE','JHM_F5_aso_performance',300),
+            ('Depth','JHM_S_ASO_depth_performance',1000)]):
+        fig,axs=plt.subplots(1,2,figsize=(6.5,5.3),sharey=True)
+        fig.subplots_adjust(left=.17,right=.985,top=.91,bottom=.18,wspace=.23)
+        for local_panel,(ax,metric,title) in enumerate(zip(axs,('mb_mm','rmse_mm'),
+                (f'{var} bias',f'{var} RMSE'))):
+            for y,date in enumerate(dates):
+                i,n=lookup[date,var,'iSnobal'],lookup[date,var,'Noah-MP']
+                if date.startswith('2026'):
+                    ax.axhspan(y-.5,y+.5,color='#e9b94a',alpha=.25,lw=0)
+                vals=[i[metric],n[metric]];ax.plot(vals,[y,y],color='.65',lw=.7)
+                if i['n_cells']!=n['n_cells'] or abs(i['aso_mean_mm']-n['aso_mean_mm'])>1e-8:
+                    raise ValueError('Matched marker sizing requires common ASO reference support')
+                observed=i['aso_mean_mm'];area=16*observed/ref
+                ax.scatter(vals[1],y,s=area,marker='s',color=colors['Noah-MP'],edgecolor='white',linewidth=.3,zorder=3)
+                ax.scatter(vals[0],y,s=4*area/np.pi,marker='o',facecolor='none',edgecolor=colors['iSnobal'],linewidth=.8,zorder=4)
+                audit.append({'panel':2*variable_number+local_panel+1,'date':date,'variable':var,'metric':metric,
+                              'isnobal_x':vals[0],'noahmp_x':vals[1],'shared_y':y,
+                              'aso_reference_mean_mm':observed,'enclosed_marker_area_pt2':area})
+            ax.axvline(0,color='.5',lw=.6);ax.set_ylim(len(dates)-.4,-.8);ax.set_title(title);ax.set_xlabel('mm')
+            ax.set_yticks(range(len(dates)),dates);ax.tick_params(axis='y',length=0)
+            ax.xaxis.set_major_locator(MaxNLocator(3));ax.spines[['top','right','left']].set_visible(False)
+            ax.text(.02,.98,f'({chr(97+local_panel)})',transform=ax.transAxes,ha='left',va='top',fontsize=8,
+                    bbox={'facecolor':'white','edgecolor':'none','alpha':.8,'pad':.5})
+        fig.legend(handles=[Line2D([],[],ls='',marker=mk,color=colors[m],mfc='none' if m=='iSnobal' else colors[m],label=m,ms=4)
+                            for m,mk in [('iSnobal','o'),('Noah-MP','s')]],ncol=2,loc='upper center',frameon=False)
         h=[Line2D([],[],ls='',marker='o',mfc='none',mec='.4',ms=np.sqrt(4*(16*v/ref)/np.pi),label=str(v))
            for v in ([100,300,600] if var=='SWE' else [300,1000,2000])]
-        fig.legend(handles=h,title=f'ASO {var.lower()} (mm)',loc='lower center',bbox_to_anchor=(xx,.002),ncol=3,
-                   frameon=False,fontsize=7,title_fontsize=7,handletextpad=.2,columnspacing=.6)
-    figure_directory.mkdir(exist_ok=True,parents=True)
-    for extension in ['pdf','png']:
-        fig.savefig(figure_directory/f'JHM_F5_aso_performance.{extension}',dpi=600,facecolor='white')
-    plt.close(fig)
+        fig.legend(handles=h,title=f'ASO {var.lower()} (mm)',loc='lower center',bbox_to_anchor=(.58,.002),ncol=3,
+                   frameon=False,fontsize=8,title_fontsize=8,handletextpad=.2,columnspacing=.6)
+        for extension in ['pdf','png']:
+            fig.savefig(figure_directory/f'{basename}.{extension}',dpi=600,facecolor='white')
+        plt.close(fig)
     return audit
 
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__,formatter_class=argparse.RawDescriptionHelpFormatter)
-    for name in ['aso-directory','model-directory','flights','grid-weights','output-directory','figure-directory']:
+    for name in ['aso-directory','model-directory','flights','grid-weights']:
+        parser.add_argument('--'+name,type=Path)
+    for name in ['output-directory','figure-directory']:
         parser.add_argument('--'+name,required=True,type=Path)
+    parser.add_argument('--scores-csv',type=Path,
+                        help='Replay the complete corrected 224-row score table; do not read rasters')
     parser.add_argument('--baseline-displayed-csv',type=Path)
     parser.add_argument('--font',type=Path)
     a=parser.parse_args()
+    if a.scores_csv:
+        if any((a.aso_directory,a.model_directory,a.flights,a.grid_weights,a.baseline_displayed_csv)):
+            parser.error('--scores-csv cannot be combined with raw-raster inputs or baseline comparison')
+        rows=load_scores_csv(a.scores_csv)
+        out=a.output_directory;out.mkdir(exist_ok=True,parents=True)
+        # Retain all full-precision rows. Replay changes presentation only.
+        write_csv(out/'F5_elevation_metrics_corrected.csv',rows)
+        write_csv(out/'F5_all_flight_metrics_corrected.csv',[r for r in rows if r['elevation_band']=='All'])
+        audit=plot(rows,a.figure_directory,a.font)
+        write_csv(out/'F5_marker_placement_audit.csv',audit)
+        manifest={'mode':'validated_score_replay','input_scores':{'file':a.scores_csv.name,'sha256':sha256(a.scores_csv)},
+          'score_rows':len(rows),'plotted_markers':2*len(audit),
+          'presentation':'Fig.5 SWE bias/RMSE; supplemental depth bias/RMSE. Scientific scores unchanged.',
+          'code_sha256':sha256(Path(__file__)),
+          'font':({'file':a.font.name,'sha256':sha256(a.font)} if a.font else
+                  {'family':'DejaVu Sans','source':'Matplotlib bundled default'}),
+          'versions':{'python':platform.python_version(),'numpy':np.__version__,'matplotlib':matplotlib.__version__},
+          'figures':[{'file':p.name,'sha256':sha256(p)} for p in sorted(a.figure_directory.glob('*'))
+                     if p.name.startswith(('JHM_F5_aso_performance.','JHM_S_ASO_depth_performance.'))]}
+        (out/'F5_split_replay_manifest.json').write_text(json.dumps(manifest,indent=2,allow_nan=False)+'\n',encoding='utf-8')
+        return
+    if not all((a.aso_directory,a.model_directory,a.flights,a.grid_weights)):
+        parser.error('Raw recomputation requires --aso-directory, --model-directory, --flights and --grid-weights')
     weights,domain,transform,crs=load_grid(a.grid_weights)
     with np.load(a.grid_weights) as z:
         dem=np.asarray(z['dem'],float)
@@ -255,7 +349,8 @@ def main():
       'baseline_displayed_csv':({'file':a.baseline_displayed_csv.name,'sha256':sha256(a.baseline_displayed_csv)} if a.baseline_displayed_csv else None),
       'versions':{'python':platform.python_version(),'numpy':np.__version__,'rasterio':rasterio.__version__,'GDAL':rasterio.__gdal_version__,'matplotlib':matplotlib.__version__},
       'outputs':[{'file':str(p.relative_to(out)),'sha256':sha256(p)} for p in sorted(out.glob('*')) if p.is_file() and p.suffix in ['.csv','.npz','.tex']],
-      'figures':[{'file':p.name,'sha256':sha256(p)} for p in sorted(a.figure_directory.glob('JHM_F5_aso_performance.*'))]}
+      'figures':[{'file':p.name,'sha256':sha256(p)} for p in sorted(a.figure_directory.glob('*'))
+                 if p.name.startswith(('JHM_F5_aso_performance.','JHM_S_ASO_depth_performance.'))]}
     (out/'F5_correction_manifest.json').write_text(json.dumps(summary,indent=2,allow_nan=False)+'\n',encoding='utf-8')
     print(json.dumps(counts,indent=2))
 

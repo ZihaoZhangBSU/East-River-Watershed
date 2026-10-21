@@ -207,9 +207,6 @@ def render(model: pd.DataFrame, aso: pd.DataFrame, output_dir: Path, font: Path 
         Line2D([], [], color="black", marker="o", linestyle="", markersize=3,
                label="ASO (flight coverage)"),
     ], loc="upper center", bbox_to_anchor=(0.5, 0.995), ncol=3, frameon=False)
-    fig.text(0.54, 0.951,
-             "Daily model comparison: MB = Noah-MP - iSnobal; rMB = 100 x MB / mean(iSnobal)",
-             ha="center", va="center", fontsize=6.5)
     paths = []
     for suffix in ("pdf", "png"):
         path = output_dir / f"JHM_F2_watershed_swe.{suffix}"
